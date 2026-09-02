@@ -1,0 +1,50 @@
+{
+  "name": "seminar-manager",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "turbo run build",
+    "build:clean": "turbo run clean:build",
+    "dev": "turbo run dev",
+    "lint-format": "turbo run lint format",
+    "lint-format:fix": "turbo run lint:fix format:fix",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "prepare": "husky install"
+  },
+  "private": "true",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.24.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@11.24.0",
+  "type": "module",
+  "devDependencies": {
+    "@jest/globals": "^30.5.1",
+    "@swc/core": "^1.16.1",
+    "@swc/jest": "^0.2.39",
+    "@tsconfig/node-lts": "^24.0.1",
+    "@tsconfig/node-ts": "^23.6.4",
+    "@types/node": "^26.4.0",
+    "husky": "^9.1.7",
+    "jest": "^30.5.1",
+    "lint-staged": "^17.4.1",
+    "nt": "^0.7.1",
+    "oxlint": "^1.81.0",
+    "prettier": "^3.9.6",
+    "rimraf": "^6.1.3",
+    "turbo": "^2.10.12",
+    "typescript": "^7.0.2"
+  }
+}
