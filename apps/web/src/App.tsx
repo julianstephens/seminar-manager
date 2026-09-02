@@ -4,15 +4,16 @@ import LandingPage from "@/pages/landing";
 import { getStoredToken, ProtectedRoute } from "@/utils";
 import { Navigate, Route, Routes } from "react-router";
 
-function App() {
+// Component ensures getStoredToken() is called fresh on each route render
+const RootRoute = () => {
   const token = getStoredToken();
+  return token ? <Navigate to="/dashboard" replace /> : <LandingPage />;
+};
 
+function App() {
   return (
     <Routes>
-      <Route
-        path="/"
-        element={token ? <Navigate to="/dashboard" replace /> : <LandingPage />}
-      />
+      <Route path="/" element={<RootRoute />} />
       <Route
         path="/dashboard"
         element={

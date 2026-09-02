@@ -1,4 +1,4 @@
-import { AUTH_TOKEN_KEY } from "@/utils";
+import { AUTH_TOKEN_KEY, readApiErrorMessage } from "@/utils";
 import {
   Alert,
   Box,
@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
+import FingerprintJS from "@fingerprintjs/fingerprintjs";
 import { useForm } from "@tanstack/react-form";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -28,7 +29,14 @@ const LandingPage = () => {
       setIsSubmitting(true);
 
       try {
-        const payload: LoginRequest = { password: value.password };
+        const fp = await FingerprintJS.load();
+        const { visitorId } = await fp.get();
+
+        const payload: LoginRequest = {
+          client_fingerprint: visitorId,
+          password: value.password,
+        };
+
         const response = await fetch("/api/auth/login", {
           method: "POST",
           headers: {
@@ -38,7 +46,11 @@ const LandingPage = () => {
         });
 
         if (!response.ok) {
-          throw new Error("Invalid admin password.");
+          const message = await readApiErrorMessage(
+            response,
+            "Unable to log in.",
+          );
+          throw new Error(message);
         }
 
         const data = (await response.json()) as LoginResponse;

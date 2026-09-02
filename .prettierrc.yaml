@@ -2,3 +2,4 @@ tabWidth: 2
 trailingComma: "all"
 useTabs: false
 singleQuote: false
+printWidth: 80
