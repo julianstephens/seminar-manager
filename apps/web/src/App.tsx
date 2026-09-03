@@ -1,6 +1,9 @@
 import "@/App.css";
 import HomePage from "@/pages/home";
 import LandingPage from "@/pages/landing";
+import SeminarDetailPage from "@/pages/seminar-detail";
+import SessionEditorPage from "@/pages/session-editor";
+import SettingsPage from "@/pages/settings";
 import { getStoredToken, ProtectedRoute } from "@/utils";
 import { Navigate, Route, Routes } from "react-router";
 
@@ -19,6 +22,30 @@ function App() {
         element={
           <ProtectedRoute>
             <HomePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/seminars/:seminarId"
+        element={
+          <ProtectedRoute>
+            <SeminarDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/seminars/:seminarId/sessions/:sessionId"
+        element={
+          <ProtectedRoute>
+            <SessionEditorPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute>
+            <SettingsPage />
           </ProtectedRoute>
         }
       />

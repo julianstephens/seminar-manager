@@ -9,7 +9,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .createTable("seminar_participant")
     .addColumn("id", "serial", (col) => col.primaryKey())
     .addColumn("seminar_id", "uuid", (col) => col.notNull())
-    .addColumn("participant_id", "uuid", (col) => col.notNull())
+    .addColumn("participant_id", "integer", (col) => col.notNull())
     .execute();
 }
 

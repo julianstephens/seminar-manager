@@ -3,8 +3,7 @@ import type { Database } from "db";
 import type { Kysely } from "kysely";
 import type { LoginResponse } from "schemas";
 
-// const DEFAULT_EXPIRES_IN = 60 * 60 * 24 * 7; // 7 days
-const DEFAULT_EXPIRES_IN = 60 * 7; // 7 min
+const DEFAULT_EXPIRES_IN = 60 * 60 * 24 * 7; // 7 days
 
 export const hashPassword = (password: string) =>
   crypto.createHash("sha256").update(password).digest("hex");

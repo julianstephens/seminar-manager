@@ -2,6 +2,7 @@ import type { Database } from "db";
 import type { Kysely } from "kysely";
 
 import { deleteSeminarParticipantsByParticipant } from "./seminar-participant";
+import { withUpdatedAt } from "./timestamps";
 
 export const createParticipant = async (
   db: Kysely<Database>,
@@ -12,10 +13,11 @@ export const createParticipant = async (
 ) => {
   const participant = await db
     .insertInto("participant")
-    .values({
-      ...values,
-      updated_at: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        ...values,
+      }),
+    )
     .returningAll()
     .executeTakeFirst();
 
@@ -45,6 +47,19 @@ export const getParticipantByDiscordUserId = async (
   );
 };
 
+export const getParticipantByName = async (
+  db: Kysely<Database>,
+  name: string,
+) => {
+  return (
+    (await db
+      .selectFrom("participant")
+      .selectAll()
+      .where("name", "=", name)
+      .executeTakeFirst()) ?? null
+  );
+};
+
 export const getParticipants = async (db: Kysely<Database>) => {
   return await db.selectFrom("participant").selectAll().execute();
 };
@@ -60,7 +75,7 @@ export const updateParticipant = async (
   return (
     (await db
       .updateTable("participant")
-      .set(values)
+      .set(withUpdatedAt(values))
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirst()) ?? null

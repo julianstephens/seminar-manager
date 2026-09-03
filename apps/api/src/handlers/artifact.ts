@@ -31,49 +31,52 @@ import type {
   ResourceUpdate,
 } from "schemas";
 
+import { serializeApiDates } from "./format";
 import { ApiError } from "./index";
 
-export const resourcePayload = (resource: Resource): ResourceResponse => ({
+export const resourcePayload = <T extends Record<string, unknown>>(
+  resource: T,
+): ResourceResponse => ({
   message: "Resource loaded successfully.",
-  data: resource,
+  data: serializeApiDates(resource) as unknown as Resource,
 });
 
-export const resourceListPayload = (
-  resources: Resource[],
+export const resourceListPayload = <T extends Record<string, unknown>>(
+  resources: T[],
 ): ResourceResponse[] =>
   resources.map((resource) => ({
     message: "Resource loaded successfully.",
-    data: resource,
+    data: serializeApiDates(resource) as unknown as Resource,
   }));
 
-export const assignmentPayload = (
-  assignment: Assignment,
+export const assignmentPayload = <T extends Record<string, unknown>>(
+  assignment: T,
 ): AssignmentResponse => ({
   message: "Assignment loaded successfully.",
-  data: assignment,
+  data: serializeApiDates(assignment) as unknown as Assignment,
 });
 
-export const assignmentListPayload = (
-  assignments: Assignment[],
+export const assignmentListPayload = <T extends Record<string, unknown>>(
+  assignments: T[],
 ): AssignmentResponse[] =>
   assignments.map((assignment) => ({
     message: "Assignment loaded successfully.",
-    data: assignment,
+    data: serializeApiDates(assignment) as unknown as Assignment,
   }));
 
-export const publicationRecordPayload = (
-  record: PublicationRecord,
+export const publicationRecordPayload = <T extends Record<string, unknown>>(
+  record: T,
 ): PublicationRecordResponse => ({
   message: "Publication record loaded successfully.",
-  data: record,
+  data: serializeApiDates(record) as unknown as PublicationRecord,
 });
 
-export const publicationRecordListPayload = (
-  records: PublicationRecord[],
+export const publicationRecordListPayload = <T extends Record<string, unknown>>(
+  records: T[],
 ): PublicationRecordResponse[] =>
   records.map((record) => ({
     message: "Publication record loaded successfully.",
-    data: record,
+    data: serializeApiDates(record) as unknown as PublicationRecord,
   }));
 
 const getSessionOrThrow = async (sessionId: string) => {

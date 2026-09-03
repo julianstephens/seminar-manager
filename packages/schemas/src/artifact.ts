@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { ApiResponseSchema } from "./api.ts";
 
-const requiredDate = z.coerce.date();
+const requiredDate = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Invalid ISO date value",
+  });
 
 export const ResourceSchema = z.object({
   id: z.uuid(),

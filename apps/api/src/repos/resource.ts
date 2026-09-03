@@ -1,6 +1,8 @@
 import type { Database } from "db";
 import type { Kysely } from "kysely";
 
+import { withUpdatedAt } from "./timestamps";
+
 export const createResource = async (
   db: Kysely<Database>,
   values: {
@@ -12,11 +14,12 @@ export const createResource = async (
 ) => {
   const resource = await db
     .insertInto("resource")
-    .values({
-      ...values,
-      visibility: values.visibility ?? "private",
-      updated_at: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        ...values,
+        visibility: values.visibility ?? "private",
+      }),
+    )
     .returningAll()
     .executeTakeFirst();
 
@@ -57,7 +60,7 @@ export const updateResource = async (
   return (
     (await db
       .updateTable("resource")
-      .set(values)
+      .set(withUpdatedAt(values))
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirst()) ?? null

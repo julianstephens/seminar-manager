@@ -1,6 +1,8 @@
 import type { Database } from "db";
 import type { Kysely } from "kysely";
 
+import { withUpdatedAt } from "./timestamps";
+
 export const createSession = async (
   db: Kysely<Database>,
   values: {
@@ -16,11 +18,12 @@ export const createSession = async (
 ) => {
   const session = await db
     .insertInto("session")
-    .values({
-      ...values,
-      status: values.status ?? "scheduled",
-      updated_at: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        ...values,
+        status: values.status ?? "scheduled",
+      }),
+    )
     .returningAll()
     .executeTakeFirst();
 
@@ -81,7 +84,7 @@ export const updateSession = async (
   return (
     (await db
       .updateTable("session")
-      .set(values)
+      .set(withUpdatedAt(values))
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirst()) ?? null

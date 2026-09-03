@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   participantListPayload,
   participantPayload,
+  resolveParticipantRecord,
   seminarListPayload,
   seminarPayload,
   sessionListPayload,
@@ -18,8 +19,8 @@ describe("seminar response helpers", () => {
       description: "desc",
       discord_channel_id: "channel-1",
       drive_folder_id: "drive-1",
-      created_at: new Date("2024-01-01T00:00:00Z"),
-      updated_at: new Date("2024-01-02T00:00:00Z"),
+      created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+      updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
     });
 
     assert.deepEqual(result, {
@@ -30,8 +31,8 @@ describe("seminar response helpers", () => {
         description: "desc",
         discord_channel_id: "channel-1",
         drive_folder_id: "drive-1",
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: "2024-01-01T00:00:00.000Z",
+        updated_at: "2024-01-02T00:00:00.000Z",
       },
     });
   });
@@ -44,8 +45,8 @@ describe("seminar response helpers", () => {
         description: null,
         discord_channel_id: "channel-1",
         drive_folder_id: null,
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+        updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
       },
     ]);
 
@@ -62,13 +63,13 @@ describe("session response helpers", () => {
       seminar_id: "seminar-1",
       session_number: 1,
       title: "Intro",
-      date: new Date("2024-02-01T00:00:00Z"),
+      date: new Date("2024-02-01T00:00:00Z").toISOString(),
       status: "scheduled",
       drive_folder_id: null,
       published_at: null,
       archived_at: null,
-      created_at: new Date("2024-01-01T00:00:00Z"),
-      updated_at: new Date("2024-01-02T00:00:00Z"),
+      created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+      updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
     });
 
     assert.deepEqual(result, {
@@ -78,13 +79,13 @@ describe("session response helpers", () => {
         seminar_id: "seminar-1",
         session_number: 1,
         title: "Intro",
-        date: new Date("2024-02-01T00:00:00Z"),
+        date: "2024-02-01T00:00:00.000Z",
         status: "scheduled",
         drive_folder_id: null,
         published_at: null,
         archived_at: null,
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: "2024-01-01T00:00:00.000Z",
+        updated_at: "2024-01-02T00:00:00.000Z",
       },
     });
   });
@@ -96,13 +97,13 @@ describe("session response helpers", () => {
         seminar_id: "seminar-1",
         session_number: 1,
         title: "Intro",
-        date: new Date("2024-02-01T00:00:00Z"),
+        date: new Date("2024-02-01T00:00:00Z").toISOString(),
         status: "scheduled",
         drive_folder_id: null,
         published_at: null,
         archived_at: null,
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+        updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
       },
     ]);
 
@@ -118,8 +119,8 @@ describe("participant response helpers", () => {
       id: 1,
       name: "Ava",
       discord_user_id: "discord-1",
-      created_at: new Date("2024-01-01T00:00:00Z"),
-      updated_at: new Date("2024-01-02T00:00:00Z"),
+      created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+      updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
     });
 
     assert.deepEqual(result, {
@@ -128,8 +129,8 @@ describe("participant response helpers", () => {
         id: 1,
         name: "Ava",
         discord_user_id: "discord-1",
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: "2024-01-01T00:00:00.000Z",
+        updated_at: "2024-01-02T00:00:00.000Z",
       },
     });
   });
@@ -140,13 +141,33 @@ describe("participant response helpers", () => {
         id: 1,
         name: "Ava",
         discord_user_id: "discord-1",
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        created_at: new Date("2024-01-01T00:00:00Z").toISOString(),
+        updated_at: new Date("2024-01-02T00:00:00Z").toISOString(),
       },
     ]);
 
     assert.equal(result.length, 1);
     assert.equal(result[0]?.message, "Participant loaded successfully.");
     assert.equal(result[0]?.data.name, "Ava");
+  });
+
+  it("prefers an exact name match before a Discord match", () => {
+    const nameMatch = {
+      id: 2,
+      name: "Ada Lovelace",
+      discord_user_id: "discord-456",
+      created_at: "2024-01-03T00:00:00.000Z",
+      updated_at: "2024-01-04T00:00:00.000Z",
+    };
+    const discordMatch = {
+      id: 1,
+      name: "Ada Lovelace",
+      discord_user_id: "discord-123",
+      created_at: "2024-01-01T00:00:00.000Z",
+      updated_at: "2024-01-02T00:00:00.000Z",
+    };
+
+    assert.equal(resolveParticipantRecord(nameMatch, discordMatch), nameMatch);
+    assert.equal(resolveParticipantRecord(null, discordMatch), discordMatch);
   });
 });

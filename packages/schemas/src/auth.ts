@@ -13,9 +13,7 @@ export const LoginResponseSchema = z.object({
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
-export const LogoutSchema = z.object({
-  access_token: z.string().min(1, "Access token is required"),
-});
+export const LogoutSchema = z.object({}).strict();
 export type LogoutRequest = z.infer<typeof LogoutSchema>;
 
 export const LogoutResponseSchema = z.object({

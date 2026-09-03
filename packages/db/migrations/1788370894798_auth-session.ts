@@ -25,9 +25,9 @@ export async function up(db: Kysely<any>): Promise<void> {
     )
     .addColumn("client_fingerprint", "text", (col) => col.notNull())
     .addColumn("access_token_hash", "text", (col) => col.notNull())
-    .addColumn("expires_at", "timestamp", (col) => col.notNull())
+    .addColumn("expires_at", "timestamptz", (col) => col.notNull())
     .addColumn("status", sql`auth_session_status_enum`, (col) => col.notNull())
-    .addColumn("created_at", "timestamp", (col) =>
+    .addColumn("created_at", "timestamptz", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )
     .execute();

@@ -2,6 +2,7 @@ import type { Database } from "db";
 import type { Kysely } from "kysely";
 
 import { deleteSeminarParticipantsBySeminar } from "./seminar-participant";
+import { withUpdatedAt } from "./timestamps";
 
 export const createSeminar = async (
   db: Kysely<Database>,
@@ -14,10 +15,11 @@ export const createSeminar = async (
 ) => {
   const seminar = await db
     .insertInto("seminar")
-    .values({
-      ...values,
-      updated_at: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        ...values,
+      }),
+    )
     .returningAll()
     .executeTakeFirst();
 
@@ -61,7 +63,7 @@ export const updateSeminar = async (
   return (
     (await db
       .updateTable("seminar")
-      .set(values)
+      .set(withUpdatedAt(values))
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirst()) ?? null

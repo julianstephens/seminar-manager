@@ -9,6 +9,8 @@ import {
   deleteSession,
   getParticipantByDiscordUserId,
   getParticipantById,
+  getParticipantByName,
+  getParticipants,
   getSeminarById,
   getSeminarByName,
   getSeminarParticipantByPair,
@@ -36,28 +38,37 @@ import type {
   SessionUpdate,
 } from "schemas";
 
+import { serializeApiDates } from "./format";
 import { ApiError } from "./index";
 
-export const seminarPayload = (seminar: Seminar): SeminarResponse => ({
+export const seminarPayload = <T extends Record<string, unknown>>(
+  seminar: T,
+): SeminarResponse => ({
   message: "Seminar loaded successfully.",
-  data: seminar,
+  data: serializeApiDates(seminar) as unknown as Seminar,
 });
 
-export const seminarListPayload = (seminars: Seminar[]): SeminarResponse[] =>
+export const seminarListPayload = <T extends Record<string, unknown>>(
+  seminars: T[],
+): SeminarResponse[] =>
   seminars.map((seminar) => ({
     message: "Seminar loaded successfully.",
-    data: seminar,
+    data: serializeApiDates(seminar) as unknown as Seminar,
   }));
 
-export const sessionPayload = (session: Session): SessionResponse => ({
+export const sessionPayload = <T extends Record<string, unknown>>(
+  session: T,
+): SessionResponse => ({
   message: "Session loaded successfully.",
-  data: session,
+  data: serializeApiDates(session) as unknown as Session,
 });
 
-export const sessionListPayload = (sessions: Session[]): SessionResponse[] =>
+export const sessionListPayload = <T extends Record<string, unknown>>(
+  sessions: T[],
+): SessionResponse[] =>
   sessions.map((session) => ({
     message: "Session loaded successfully.",
-    data: session,
+    data: serializeApiDates(session) as unknown as Session,
   }));
 
 export const getSeminarsHandler = async (): Promise<SeminarResponse[]> => {
@@ -190,6 +201,9 @@ export const createSessionHandler = async (
   const session = await createSession(db, {
     ...body,
     seminar_id: seminarId,
+    date: new Date(body.date),
+    published_at: body.published_at ? new Date(body.published_at) : null,
+    archived_at: body.archived_at ? new Date(body.archived_at) : null,
     status: body.status ?? "scheduled",
   });
 
@@ -232,7 +246,22 @@ export const updateSessionHandler = async (
     }
   }
 
-  const session = await updateSession(db, sessionId, body);
+  const session = await updateSession(db, sessionId, {
+    ...body,
+    date: body.date ? new Date(body.date) : undefined,
+    published_at:
+      body.published_at === null
+        ? null
+        : body.published_at
+          ? new Date(body.published_at)
+          : undefined,
+    archived_at:
+      body.archived_at === null
+        ? null
+        : body.archived_at
+          ? new Date(body.archived_at)
+          : undefined,
+  });
 
   if (!session) {
     throw new ApiError(500, "Unable to update session");
@@ -262,20 +291,46 @@ export const deleteSessionHandler = async (
   return { message: "Session deleted successfully.", data: null };
 };
 
-export const participantPayload = (
-  participant: Participant,
+export const participantPayload = <T extends Record<string, unknown>>(
+  participant: T,
 ): ParticipantResponse => ({
   message: "Participant loaded successfully.",
-  data: participant,
+  data: serializeApiDates(participant) as unknown as Participant,
 });
 
-export const participantListPayload = (
-  participants: Participant[],
+export const participantListPayload = <T extends Record<string, unknown>>(
+  participants: T[],
 ): ParticipantResponse[] =>
   participants.map((participant) => ({
     message: "Participant loaded successfully.",
-    data: participant,
+    data: serializeApiDates(participant) as unknown as Participant,
   }));
+
+type ParticipantRecord = {
+  id: number;
+  name: string;
+  discord_user_id: string;
+  created_at?: Date | string;
+  updated_at?: Date | string;
+};
+
+export const resolveParticipantRecord = (
+  matchingName: ParticipantRecord | null,
+  matchingDiscord: ParticipantRecord | null,
+): ParticipantRecord | null => {
+  if (matchingName) {
+    return matchingName;
+  }
+
+  return matchingDiscord;
+};
+
+export const getAllParticipantsHandler = async (): Promise<
+  ParticipantResponse[]
+> => {
+  const participants = await getParticipants(db);
+  return participantListPayload(participants);
+};
 
 export const getParticipantsHandler = async (
   seminarId: string,
@@ -294,8 +349,16 @@ export const getParticipantsHandler = async (
   );
 
   return participantListPayload(
-    participants.filter((participant): participant is Participant =>
-      Boolean(participant),
+    participants.filter(
+      (
+        participant,
+      ): participant is {
+        id: number;
+        name: string;
+        discord_user_id: string;
+        created_at: Date;
+        updated_at: Date;
+      } => Boolean(participant),
     ),
   );
 };
@@ -337,14 +400,21 @@ export const createParticipantHandler = async (
     throw new ApiError(404, "Seminar not found");
   }
 
-  let participant = await getParticipantByDiscordUserId(
+  const trimmedName = body.name.trim();
+  const trimmedDiscordUserId = body.discord_user_id.trim();
+
+  const matchingName = await getParticipantByName(db, trimmedName);
+  const matchingDiscord = await getParticipantByDiscordUserId(
     db,
-    body.discord_user_id,
+    trimmedDiscordUserId,
   );
 
-  if (!participant) {
-    participant = await createParticipant(db, body);
-  }
+  const participant =
+    resolveParticipantRecord(matchingName, matchingDiscord) ??
+    (await createParticipant(db, {
+      name: trimmedName,
+      discord_user_id: trimmedDiscordUserId,
+    }));
 
   if (!participant) {
     throw new ApiError(500, "Unable to create participant");

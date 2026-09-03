@@ -17,15 +17,15 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn("seminar_id", "integer", (col) => col.notNull())
     .addColumn("session_number", "integer", (col) => col.notNull())
     .addColumn("title", "text", (col) => col.notNull())
-    .addColumn("date", "timestamp", (col) => col.notNull())
+    .addColumn("date", "timestamptz", (col) => col.notNull())
     .addColumn("status", sql`session_status_enum`, (col) => col.notNull())
     .addColumn("drive_folder_id", "text")
-    .addColumn("published_at", "timestamp")
-    .addColumn("archived_at", "timestamp")
-    .addColumn("created_at", "timestamp", (col) =>
+    .addColumn("published_at", "timestamptz")
+    .addColumn("archived_at", "timestamptz")
+    .addColumn("created_at", "timestamptz", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )
-    .addColumn("updated_at", "timestamp", (col) =>
+    .addColumn("updated_at", "timestamptz", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )
     .addUniqueConstraint("session_seminar_id_session_number_unique", [

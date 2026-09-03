@@ -32,6 +32,25 @@ export type LoginAction =
   | "revoke-and-create-session"
   | "create-session";
 
+export const extractBearerToken = (
+  authorizationHeader?: string | string[] | undefined,
+): string | null => {
+  if (!authorizationHeader) {
+    return null;
+  }
+
+  const header = Array.isArray(authorizationHeader)
+    ? authorizationHeader[0]
+    : authorizationHeader;
+
+  if (!header) {
+    return null;
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() ? match[1].trim() : null;
+};
+
 export const resolveLoginAction = ({
   user,
   passwordHash,

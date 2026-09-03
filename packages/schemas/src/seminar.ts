@@ -1,8 +1,14 @@
 import { z } from "zod";
 import { ApiResponseSchema } from "./index.ts";
 
-const nullableDate = z.coerce.date().nullable();
-const requiredDate = z.coerce.date();
+const isoDateString = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Invalid ISO date value",
+  });
+
+const nullableDate = isoDateString.nullable();
+const requiredDate = isoDateString;
 
 export const SeminarSchema = z.object({
   id: z.uuid(),
@@ -55,11 +61,11 @@ export const SessionCreateSchema = z.object({
   seminar_id: z.uuid(),
   session_number: z.number().int().positive(),
   title: z.string().min(1, "Session title is required"),
-  date: z.coerce.date(),
+  date: isoDateString,
   status: z.enum(["scheduled", "completed", "canceled"]).default("scheduled"),
   drive_folder_id: z.string().optional().nullable(),
-  published_at: z.coerce.date().optional().nullable(),
-  archived_at: z.coerce.date().optional().nullable(),
+  published_at: isoDateString.optional().nullable(),
+  archived_at: isoDateString.optional().nullable(),
 });
 export type SessionCreate = z.infer<typeof SessionCreateSchema>;
 

@@ -14,10 +14,10 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn("description", "text")
     .addColumn("discord_channel_id", "text", (col) => col.notNull())
     .addColumn("drive_folder_id", "text")
-    .addColumn("created_at", "timestamp", (col) =>
+    .addColumn("created_at", "timestamptz", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )
-    .addColumn("updated_at", "timestamp", (col) =>
+    .addColumn("updated_at", "timestamptz", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )
     .execute();

@@ -1,5 +1,10 @@
+import db from "@/db";
 import { ApiError } from "@/handlers";
-import { loginHandler, logoutHandler } from "@/handlers/auth";
+import {
+  extractBearerToken,
+  loginHandler,
+  logoutHandler,
+} from "@/handlers/auth";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
 import {
@@ -22,7 +27,6 @@ import {
   LoginSchema,
   LogoutErrorResponseSchema,
   LogoutResponseSchema,
-  LogoutSchema,
   ParticipantCreateSchema,
   ParticipantResponseSchema,
   ParticipantUpdateSchema,
@@ -37,6 +41,7 @@ import {
   SeminarUpdateSchema,
   SessionCreateSchema,
   SessionResponseSchema,
+  SessionUpdateSchema,
 } from "schemas";
 import { z } from "zod";
 import { toRequestErrorResponse } from "./error-response";
@@ -63,6 +68,7 @@ import {
   createSessionHandler,
   deleteParticipantHandler,
   deleteSeminarHandler,
+  getAllParticipantsHandler,
   getParticipantHandler,
   getParticipantsHandler,
   getSeminarHandler,
@@ -71,7 +77,9 @@ import {
   getSessionsHandler,
   updateParticipantHandler,
   updateSeminarHandler,
+  updateSessionHandler,
 } from "@/handlers/seminar";
+import { getAuthSession } from "@/repos/auth";
 import path from "path";
 import { Worker } from "worker_threads";
 import { buildDbCleanerWorkerData } from "./db-cleaner";
@@ -98,6 +106,33 @@ export const setupApp = (): FastifyInstance => {
   });
   app.register(fastifySwaggerUI, {
     routePrefix: "/docs",
+  });
+
+  app.addHook("preHandler", async (request) => {
+    const publicRoutes = ["/auth/login", "/auth/logout"];
+    const isPublicRequest =
+      request.method === "POST" && publicRoutes.includes(request.url);
+
+    if (isPublicRequest) {
+      return;
+    }
+
+    const authHeader = request.headers.authorization;
+    const accessToken = extractBearerToken(authHeader);
+
+    if (!accessToken) {
+      throw new ApiError(401, "Authentication required");
+    }
+
+    const session = await getAuthSession(db, accessToken);
+
+    if (!session || session.status !== "active") {
+      throw new ApiError(401, "Invalid session");
+    }
+
+    if (session.expires_at.getTime() <= Date.now()) {
+      throw new ApiError(401, "Session expired");
+    }
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -157,7 +192,6 @@ export const setupApp = (): FastifyInstance => {
       url: "/auth/logout",
       schema: {
         tags: ["auth"],
-        body: LogoutSchema,
         response: {
           200: LogoutResponseSchema,
           401: LogoutErrorResponseSchema,
@@ -165,7 +199,13 @@ export const setupApp = (): FastifyInstance => {
         },
       },
       handler: async (request, _reply) => {
-        await logoutHandler(request.body.access_token);
+        const accessToken = extractBearerToken(request.headers.authorization);
+
+        if (!accessToken) {
+          throw new ApiError(401, "Authentication required");
+        }
+
+        await logoutHandler(accessToken);
         return { success: true, message: "Session revoked successfully." };
       },
     });
@@ -314,6 +354,29 @@ export const setupApp = (): FastifyInstance => {
       handler: async (request, _reply) => {
         return await createSessionHandler(
           request.params.seminar_id,
+          request.body,
+        );
+      },
+    });
+
+    app.withTypeProvider<ZodTypeProvider>().route({
+      method: "PATCH",
+      url: "/seminars/:seminar_id/sessions/:session_id",
+      schema: {
+        tags: ["sessions"],
+        params: z.object({ seminar_id: z.uuid(), session_id: z.uuid() }),
+        body: SessionUpdateSchema,
+        response: {
+          200: SessionResponseSchema,
+          400: ApiErrorResponseSchema,
+          401: ApiErrorResponseSchema,
+          500: ApiErrorResponseSchema,
+        },
+      },
+      handler: async (request, _reply) => {
+        return await updateSessionHandler(
+          request.params.seminar_id,
+          request.params.session_id,
           request.body,
         );
       },
@@ -597,6 +660,22 @@ export const setupApp = (): FastifyInstance => {
           request.params.publication_record_id,
           request.query.session_id,
         );
+      },
+    });
+
+    app.withTypeProvider<ZodTypeProvider>().route({
+      method: "GET",
+      url: "/participants",
+      schema: {
+        tags: ["participants"],
+        response: {
+          200: ParticipantResponseSchema.array(),
+          401: ApiErrorResponseSchema,
+          500: ApiErrorResponseSchema,
+        },
+      },
+      handler: async (_request, _reply) => {
+        return await getAllParticipantsHandler();
       },
     });
 

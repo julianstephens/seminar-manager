@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolveLoginAction } from "./auth";
+import { extractBearerToken, resolveLoginAction } from "./auth";
+
+describe("extractBearerToken", () => {
+  it("returns the token from a bearer authorization header", () => {
+    assert.equal(extractBearerToken("Bearer abc123"), "abc123");
+  });
+
+  it("rejects malformed bearer headers", () => {
+    assert.equal(extractBearerToken("Token abc123"), null);
+    assert.equal(extractBearerToken(undefined), null);
+  });
+});
 
 describe("resolveLoginAction", () => {
   it("creates a user and session when no user exists", () => {
