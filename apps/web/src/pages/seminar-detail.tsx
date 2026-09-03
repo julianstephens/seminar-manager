@@ -1,6 +1,7 @@
 import {
   createParticipant,
   createSession,
+  deleteParticipantFromSeminar,
   fetchParticipants,
   fetchSeminarById,
   fetchSeminarParticipants,
@@ -15,7 +16,6 @@ import {
   AUTH_TOKEN_KEY,
   authFetch,
   clearStoredToken,
-  formatUtcTimestamp,
   readApiErrorMessage,
 } from "@/utils";
 import {
@@ -44,6 +44,7 @@ import {
   LuChevronRight,
   LuPencilLine,
   LuPlus,
+  LuTrash2,
   LuX,
 } from "react-icons/lu";
 import { useNavigate, useParams } from "react-router";
@@ -213,6 +214,19 @@ const SeminarDetailPage = () => {
       participantForm.reset();
       setParticipantSubmitError(null);
       setIsAddParticipantOpen(false);
+    },
+    onError: (error: Error) => {
+      setParticipantSubmitError(error.message);
+    },
+  });
+
+  const removeParticipantMutation = useMutation({
+    mutationFn: (participantId: number) =>
+      deleteParticipantFromSeminar(seminarId ?? "", participantId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: participantQueryKeys.list(seminarId ?? ""),
+      });
     },
     onError: (error: Error) => {
       setParticipantSubmitError(error.message);
@@ -582,7 +596,7 @@ const SeminarDetailPage = () => {
             </Box>
           </Flex>
 
-          <Box>
+          {/* <Box>
             <Text
               fontSize="xs"
               letterSpacing="0.18em"
@@ -618,7 +632,7 @@ const SeminarDetailPage = () => {
                 </Text>
               </Stack>
             </Box>
-          </Box>
+          </Box> */}
 
           <Stack gap={4}>
             <Text
@@ -636,9 +650,27 @@ const SeminarDetailPage = () => {
                 <List.Root display="flex" flexDirection="row" ps={4} gap={8}>
                   {participants.map(({ data: participant }) => (
                     <List.Item key={participant.id}>
-                      <Text color="white" fontWeight="600">
-                        {participant.name.split(" ")[0]}
-                      </Text>
+                      <Flex align="center" gap={2}>
+                        <Text color="white" fontWeight="600">
+                          {participant.name.split(" ")[0]}
+                        </Text>
+                        <Button
+                          aria-label={`Remove ${participant.name} from seminar`}
+                          variant="ghost"
+                          size="xs"
+                          color="red.300"
+                          _hover={{ bg: "red.950" }}
+                          loading={removeParticipantMutation.isPending}
+                          disabled={removeParticipantMutation.isPending}
+                          onClick={() => {
+                            void removeParticipantMutation.mutateAsync(
+                              participant.id,
+                            );
+                          }}
+                        >
+                          <Icon as={LuTrash2} boxSize={3.5} />
+                        </Button>
+                      </Flex>
                     </List.Item>
                   ))}
                 </List.Root>
@@ -917,6 +949,34 @@ const SeminarDetailPage = () => {
                             }
                           >
                             {sessionEntry.status}
+                          </Text>
+                          <Text
+                            px={2}
+                            py={1}
+                            fontSize="xs"
+                            fontWeight="600"
+                            borderRadius="md"
+                            textTransform="capitalize"
+                            bg={
+                              sessionEntry.archived_at
+                                ? "orange.950"
+                                : sessionEntry.published_at
+                                  ? "blue.950"
+                                  : "gray.900"
+                            }
+                            color={
+                              sessionEntry.archived_at
+                                ? "orange.300"
+                                : sessionEntry.published_at
+                                  ? "blue.300"
+                                  : "gray.300"
+                            }
+                          >
+                            {sessionEntry.archived_at
+                              ? "archived"
+                              : sessionEntry.published_at
+                                ? "published"
+                                : "draft"}
                           </Text>
                           <IconButton
                             aria-label={`Open session ${sessionEntry.session_number}`}

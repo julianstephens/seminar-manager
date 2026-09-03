@@ -1,10 +1,53 @@
 import db from "@/db";
 import { ApiError } from "@/handlers";
 import {
+  createAssignmentHandler,
+  createResourceHandler,
+  deleteAssignmentHandler,
+  deleteResourceHandler,
+  getAssignmentsHandler,
+  getPublicationRecordHandler,
+  getPublicationRecordsHandler,
+  getResourcesHandler,
+  updateResourceHandler,
+} from "@/handlers/artifact";
+import {
   extractBearerToken,
   loginHandler,
   logoutHandler,
 } from "@/handlers/auth";
+import {
+  createParticipantHandler,
+  createSeminarHandler,
+  createSessionHandler,
+  deleteSeminarHandler,
+  deleteSessionHandler,
+  getAllParticipantsHandler,
+  getParticipantsHandler,
+  getSeminarHandler,
+  getSeminarsHandler,
+  getSessionsHandler,
+  participantPayload,
+  sessionPayload,
+  updateParticipantHandler,
+  updateSeminarHandler,
+  updateSessionHandler,
+} from "@/handlers/seminar";
+import {
+  createParticipant,
+  createPublicationRecord,
+  getAssignmentById,
+  getParticipantByDiscordUserId,
+  getParticipantById,
+  getParticipantByName,
+  getPublicationRecordById,
+  getPublicationRecordsBySession,
+  getResourceById,
+  getSeminarParticipants,
+  getSessionById,
+  updateSession,
+} from "@/repos";
+import { getAuthSession } from "@/repos/auth";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
 import {
@@ -20,8 +63,6 @@ import type { FastifyInstance } from "fastify";
 import Fastify from "fastify";
 import {
   ApiErrorResponseSchema,
-  ApiResponseSchema,
-  AssignmentCreateSchema,
   AssignmentResponseSchema,
   LoginResponseSchema,
   LoginSchema,
@@ -30,9 +71,7 @@ import {
   ParticipantCreateSchema,
   ParticipantResponseSchema,
   ParticipantUpdateSchema,
-  PublicationRecordCreateSchema,
   PublicationRecordResponseSchema,
-  PublicationRecordUpdateSchema,
   ResourceCreateSchema,
   ResourceResponseSchema,
   ResourceUpdateSchema,
@@ -46,53 +85,15 @@ import {
 import { z } from "zod";
 import { toRequestErrorResponse } from "./error-response";
 
-import {
-  createAssignmentHandler,
-  createPublicationRecordHandler,
-  createResourceHandler,
-  deleteAssignmentHandler,
-  deletePublicationRecordHandler,
-  deleteResourceHandler,
-  getAssignmentHandler,
-  getAssignmentsHandler,
-  getPublicationRecordHandler,
-  getPublicationRecordsHandler,
-  getResourceHandler,
-  getResourcesHandler,
-  updatePublicationRecordHandler,
-  updateResourceHandler,
-} from "@/handlers/artifact";
-import {
-  createParticipantHandler,
-  createSeminarHandler,
-  createSessionHandler,
-  deleteParticipantHandler,
-  deleteSeminarHandler,
-  getAllParticipantsHandler,
-  getParticipantHandler,
-  getParticipantsHandler,
-  getSeminarHandler,
-  getSeminarsHandler,
-  getSessionHandler,
-  getSessionsHandler,
-  updateParticipantHandler,
-  updateSeminarHandler,
-  updateSessionHandler,
-} from "@/handlers/seminar";
-import { getAuthSession } from "@/repos/auth";
-import path from "path";
-import { Worker } from "worker_threads";
-import { buildDbCleanerWorkerData } from "./db-cleaner";
-import { env } from "./env";
-
-export const setupApp = (): FastifyInstance => {
+export const setupApp = async (): Promise<FastifyInstance> => {
   const app = Fastify({
     logger: true,
   });
+
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  app.register(fastifySwagger, {
+  await app.register(fastifySwagger, {
     openapi: {
       info: {
         title: "Seminar Manager API",
@@ -104,21 +105,23 @@ export const setupApp = (): FastifyInstance => {
     transform: jsonSchemaTransform,
     transformObject: jsonSchemaTransformObject,
   });
-  app.register(fastifySwaggerUI, {
+
+  await app.register(fastifySwaggerUI, {
     routePrefix: "/docs",
   });
 
   app.addHook("preHandler", async (request) => {
-    const publicRoutes = ["/auth/login", "/auth/logout"];
+    const requestPath = request.url.split("?")[0];
+    const publicRoutes = ["/api/auth/login", "/api/auth/logout"];
     const isPublicRequest =
-      request.method === "POST" && publicRoutes.includes(request.url);
+      (publicRoutes.includes(requestPath) && request.method === "POST") ||
+      requestPath.startsWith("/docs");
 
     if (isPublicRequest) {
       return;
     }
 
-    const authHeader = request.headers.authorization;
-    const accessToken = extractBearerToken(authHeader);
+    const accessToken = extractBearerToken(request.headers.authorization);
 
     if (!accessToken) {
       throw new ApiError(401, "Authentication required");
@@ -168,650 +171,659 @@ export const setupApp = (): FastifyInstance => {
     );
   });
 
-  app.after(() => {
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/auth/login",
-      schema: {
-        tags: ["auth"],
-        body: LoginSchema,
-        response: {
-          200: LoginResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await loginHandler(request.body);
-      },
-    });
+  const typedApp = app.withTypeProvider<ZodTypeProvider>();
 
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/auth/logout",
-      schema: {
-        tags: ["auth"],
-        response: {
-          200: LogoutResponseSchema,
-          401: LogoutErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
+  typedApp.route({
+    method: "POST",
+    url: "/api/auth/login",
+    schema: {
+      tags: ["auth"],
+      body: LoginSchema,
+      response: {
+        200: LoginResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
       },
-      handler: async (request, _reply) => {
-        const accessToken = extractBearerToken(request.headers.authorization);
-
-        if (!accessToken) {
-          throw new ApiError(401, "Authentication required");
-        }
-
-        await logoutHandler(accessToken);
-        return { success: true, message: "Session revoked successfully." };
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars",
-      schema: {
-        tags: ["seminars"],
-        response: {
-          200: SeminarResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (_request, _reply) => {
-        return await getSeminarsHandler();
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars/:seminar_id",
-      schema: {
-        tags: ["seminars"],
-        params: z.object({ seminar_id: z.string() }),
-        response: {
-          200: SeminarResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getSeminarHandler(request.params.seminar_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/seminars",
-      schema: {
-        tags: ["seminars"],
-        body: SeminarCreateSchema,
-        response: {
-          200: SeminarResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createSeminarHandler(request.body);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "PATCH",
-      url: "/seminars/:seminar_id",
-      schema: {
-        tags: ["seminars"],
-        params: z.object({ seminar_id: z.uuid() }),
-        body: SeminarUpdateSchema,
-        response: {
-          200: SeminarResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await updateSeminarHandler(
-          request.params.seminar_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "DELETE",
-      url: "/seminars/:seminar_id",
-      schema: {
-        tags: ["seminars"],
-        params: z.object({ seminar_id: z.uuid() }),
-        response: {
-          200: ApiResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await deleteSeminarHandler(request.params.seminar_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars/:seminar_id/sessions",
-      schema: {
-        tags: ["sessions"],
-        params: z.object({ seminar_id: z.uuid() }),
-        response: {
-          200: SessionResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getSessionsHandler(request.params.seminar_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars/:seminar_id/sessions/:session_id",
-      schema: {
-        tags: ["sessions"],
-        params: z.object({ seminar_id: z.uuid(), session_id: z.uuid() }),
-        response: {
-          200: SessionResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getSessionHandler(
-          request.params.seminar_id,
-          request.params.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/seminars/:seminar_id/sessions",
-      schema: {
-        tags: ["sessions"],
-        params: z.object({ seminar_id: z.uuid() }),
-        body: SessionCreateSchema,
-        response: {
-          200: SessionResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createSessionHandler(
-          request.params.seminar_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "PATCH",
-      url: "/seminars/:seminar_id/sessions/:session_id",
-      schema: {
-        tags: ["sessions"],
-        params: z.object({ seminar_id: z.uuid(), session_id: z.uuid() }),
-        body: SessionUpdateSchema,
-        response: {
-          200: SessionResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await updateSessionHandler(
-          request.params.seminar_id,
-          request.params.session_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/resources",
-      schema: {
-        tags: ["resources"],
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: ResourceResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getResourcesHandler(request.query.session_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/resources/:resource_id",
-      schema: {
-        tags: ["resources"],
-        params: z.object({ resource_id: z.uuid() }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: ResourceResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getResourceHandler(
-          request.params.resource_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/resources",
-      schema: {
-        tags: ["resources"],
-        body: ResourceCreateSchema,
-        response: {
-          200: ResourceResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createResourceHandler(request.body);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "PATCH",
-      url: "/resources/:resource_id",
-      schema: {
-        tags: ["resources"],
-        params: z.object({ resource_id: z.uuid() }),
-        body: ResourceUpdateSchema,
-        response: {
-          200: ResourceResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await updateResourceHandler(
-          request.params.resource_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "DELETE",
-      url: "/resources/:resource_id",
-      schema: {
-        tags: ["resources"],
-        params: z.object({ resource_id: z.uuid() }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: ApiResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await deleteResourceHandler(
-          request.params.resource_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/assignments",
-      schema: {
-        tags: ["assignments"],
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: AssignmentResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getAssignmentsHandler(request.query.session_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/assignments/:assignment_id",
-      schema: {
-        tags: ["assignments"],
-        params: z.object({ assignment_id: z.uuid() }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: AssignmentResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getAssignmentHandler(
-          request.params.assignment_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/assignments",
-      schema: {
-        tags: ["assignments"],
-        body: AssignmentCreateSchema,
-        response: {
-          200: AssignmentResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createAssignmentHandler(request.body);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "DELETE",
-      url: "/assignments/:assignment_id",
-      schema: {
-        tags: ["assignments"],
-        params: z.object({ assignment_id: z.uuid() }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: ApiResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await deleteAssignmentHandler(
-          request.params.assignment_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/publication-records",
-      schema: {
-        tags: ["publication-records"],
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: PublicationRecordResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getPublicationRecordsHandler(request.query.session_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/publication-records/:publication_record_id",
-      schema: {
-        tags: ["publication-records"],
-        params: z.object({
-          publication_record_id: z.number().int().positive(),
-        }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: PublicationRecordResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getPublicationRecordHandler(
-          request.params.publication_record_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/publication-records",
-      schema: {
-        tags: ["publication-records"],
-        body: PublicationRecordCreateSchema,
-        response: {
-          200: PublicationRecordResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createPublicationRecordHandler(request.body);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "PATCH",
-      url: "/publication-records/:publication_record_id",
-      schema: {
-        tags: ["publication-records"],
-        params: z.object({
-          publication_record_id: z.number().int().positive(),
-        }),
-        body: PublicationRecordUpdateSchema,
-        response: {
-          200: PublicationRecordResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await updatePublicationRecordHandler(
-          request.params.publication_record_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "DELETE",
-      url: "/publication-records/:publication_record_id",
-      schema: {
-        tags: ["publication-records"],
-        params: z.object({
-          publication_record_id: z.number().int().positive(),
-        }),
-        querystring: z.object({ session_id: z.uuid() }),
-        response: {
-          200: ApiResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await deletePublicationRecordHandler(
-          request.params.publication_record_id,
-          request.query.session_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/participants",
-      schema: {
-        tags: ["participants"],
-        response: {
-          200: ParticipantResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (_request, _reply) => {
-        return await getAllParticipantsHandler();
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars/:seminar_id/participants",
-      schema: {
-        tags: ["participants"],
-        params: z.object({ seminar_id: z.uuid() }),
-        response: {
-          200: ParticipantResponseSchema.array(),
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getParticipantsHandler(request.params.seminar_id);
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "GET",
-      url: "/seminars/:seminar_id/participants/:participant_id",
-      schema: {
-        tags: ["participants"],
-        params: z.object({
-          seminar_id: z.uuid(),
-          participant_id: z.number().int().positive(),
-        }),
-        response: {
-          200: ParticipantResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await getParticipantHandler(
-          request.params.seminar_id,
-          request.params.participant_id,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "POST",
-      url: "/seminars/:seminar_id/participants",
-      schema: {
-        tags: ["participants"],
-        params: z.object({ seminar_id: z.uuid() }),
-        body: ParticipantCreateSchema,
-        response: {
-          200: ParticipantResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await createParticipantHandler(
-          request.params.seminar_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "PATCH",
-      url: "/seminars/:seminar_id/participants/:participant_id",
-      schema: {
-        tags: ["participants"],
-        params: z.object({
-          seminar_id: z.uuid(),
-          participant_id: z.number().int().positive(),
-        }),
-        body: ParticipantUpdateSchema,
-        response: {
-          200: ParticipantResponseSchema,
-          400: ApiErrorResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await updateParticipantHandler(
-          request.params.seminar_id,
-          request.params.participant_id,
-          request.body,
-        );
-      },
-    });
-
-    app.withTypeProvider<ZodTypeProvider>().route({
-      method: "DELETE",
-      url: "/seminars/:seminar_id/participants/:participant_id",
-      schema: {
-        tags: ["participants"],
-        params: z.object({
-          seminar_id: z.uuid(),
-          participant_id: z.number().int().positive(),
-        }),
-        response: {
-          200: ApiResponseSchema,
-          401: ApiErrorResponseSchema,
-          500: ApiErrorResponseSchema,
-        },
-      },
-      handler: async (request, _reply) => {
-        return await deleteParticipantHandler(
-          request.params.seminar_id,
-          request.params.participant_id,
-        );
-      },
-    });
+    },
+    handler: async (request, _reply) => {
+      return await loginHandler(request.body);
+    },
   });
 
-  app.ready().then(() => {
-    app.log.info("server is ready. spawning background thread...");
-
-    const worker = new Worker(
-      path.resolve(import.meta.dirname, "db-cleaner.js"),
-      {
-        workerData: buildDbCleanerWorkerData(env.DATABASE_URL),
+  typedApp.route({
+    method: "POST",
+    url: "/api/auth/logout",
+    schema: {
+      tags: ["auth"],
+      response: {
+        200: LogoutResponseSchema,
+        401: LogoutErrorResponseSchema,
+        500: ApiErrorResponseSchema,
       },
-    );
+    },
+    handler: async (request, _reply) => {
+      const accessToken = extractBearerToken(request.headers.authorization);
 
-    worker.on("error", (err) => {
-      app.log.error(err, "Background worker encountered an error");
-    });
-
-    worker.on("exit", (code) => {
-      if (code !== 0) {
-        app.log.error(`Background worker exited with code ${code}`);
-      } else {
-        app.log.info("Background worker exited successfully");
+      if (!accessToken) {
+        throw new ApiError(401, "Authentication required");
       }
-    });
+
+      await logoutHandler(accessToken);
+      return { success: true, message: "Session revoked successfully." };
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/seminars",
+    schema: {
+      tags: ["seminars"],
+      response: {
+        200: SeminarResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (_request, _reply) => {
+      return await getSeminarsHandler();
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/seminars/:seminar_id",
+    schema: {
+      tags: ["seminars"],
+      params: z.object({ seminar_id: z.uuid() }),
+      response: {
+        200: SeminarResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getSeminarHandler(request.params.seminar_id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/seminars",
+    schema: {
+      tags: ["seminars"],
+      body: SeminarCreateSchema,
+      response: {
+        200: SeminarResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await createSeminarHandler(request.body);
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/seminars/:seminar_id/sessions",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ seminar_id: z.uuid() }),
+      response: {
+        200: SessionResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getSessionsHandler(request.params.seminar_id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/seminars/:seminar_id/sessions",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ seminar_id: z.uuid() }),
+      body: SessionCreateSchema,
+      response: {
+        200: SessionResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await createSessionHandler(
+        request.params.seminar_id,
+        request.body,
+      );
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/sessions/:id",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: SessionResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const session = await getSessionById(db, request.params.id);
+
+      if (!session) {
+        throw new ApiError(404, "Session not found");
+      }
+
+      return sessionPayload(session);
+    },
+  });
+
+  typedApp.route({
+    method: "PATCH",
+    url: "/api/sessions/:id",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      body: SessionUpdateSchema,
+      response: {
+        200: SessionResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const session = await updateSession(db, request.params.id, {
+        ...request.body,
+        date: request.body.date ? new Date(request.body.date) : undefined,
+        published_at:
+          request.body.published_at === null
+            ? null
+            : request.body.published_at
+              ? new Date(request.body.published_at)
+              : undefined,
+        archived_at:
+          request.body.archived_at === null
+            ? null
+            : request.body.archived_at
+              ? new Date(request.body.archived_at)
+              : undefined,
+      });
+
+      if (!session) {
+        throw new ApiError(404, "Session not found");
+      }
+
+      return sessionPayload(session);
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/sessions/:id/resources",
+    schema: {
+      tags: ["resources"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: ResourceResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getResourcesHandler(request.params.id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/sessions/:id/resources",
+    schema: {
+      tags: ["resources"],
+      params: z.object({ id: z.uuid() }),
+      body: ResourceCreateSchema,
+      response: {
+        200: ResourceResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await createResourceHandler({
+        ...request.body,
+        session_id: request.params.id,
+      });
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/sessions/:id/assignments",
+    schema: {
+      tags: ["assignments"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: AssignmentResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getAssignmentsHandler(request.params.id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/sessions/:id/assignments",
+    schema: {
+      tags: ["assignments"],
+      params: z.object({ id: z.uuid() }),
+      body: z.object({
+        participant_id: z.number().int().positive(),
+        resource_id: z.uuid(),
+      }),
+      response: {
+        200: AssignmentResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await createAssignmentHandler({
+        ...request.body,
+        session_id: request.params.id,
+      });
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/publication-records",
+    schema: {
+      tags: ["publication-records"],
+      querystring: z.object({ session_id: z.uuid() }),
+      response: {
+        200: PublicationRecordResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getPublicationRecordsHandler(request.query.session_id);
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/participants",
+    schema: {
+      tags: ["participants"],
+      response: {
+        200: ParticipantResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (_request, _reply) => {
+      return await getAllParticipantsHandler();
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/participants",
+    schema: {
+      tags: ["participants"],
+      body: ParticipantCreateSchema,
+      response: {
+        200: ParticipantResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const trimmedName = request.body.name.trim();
+      const trimmedDiscordUserId = request.body.discord_user_id.trim();
+
+      const matchingName = await getParticipantByName(db, trimmedName);
+      const matchingDiscord = await getParticipantByDiscordUserId(
+        db,
+        trimmedDiscordUserId,
+      );
+
+      const participant =
+        matchingName ??
+        matchingDiscord ??
+        (await createParticipant(db, {
+          name: trimmedName,
+          discord_user_id: trimmedDiscordUserId,
+        }));
+
+      if (!participant) {
+        throw new ApiError(500, "Unable to create participant");
+      }
+
+      return participantPayload(participant);
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/seminars/:seminar_id/participants",
+    schema: {
+      tags: ["participants"],
+      params: z.object({ seminar_id: z.uuid() }),
+      response: {
+        200: ParticipantResponseSchema.array(),
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await getParticipantsHandler(request.params.seminar_id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/seminars/:seminar_id/participants",
+    schema: {
+      tags: ["participants"],
+      params: z.object({ seminar_id: z.uuid() }),
+      body: ParticipantCreateSchema,
+      response: {
+        200: ParticipantResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await createParticipantHandler(
+        request.params.seminar_id,
+        request.body,
+      );
+    },
+  });
+
+  // PATCH /api/seminars/:seminar_id
+  typedApp.route({
+    method: "PATCH",
+    url: "/api/seminars/:seminar_id",
+    schema: {
+      tags: ["seminars"],
+      params: z.object({ seminar_id: z.uuid() }),
+      body: SeminarUpdateSchema,
+      response: {
+        200: SeminarResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await updateSeminarHandler(
+        request.params.seminar_id,
+        request.body,
+      );
+    },
+  });
+
+  // DELETE /api/seminars/:seminar_id
+  typedApp.route({
+    method: "DELETE",
+    url: "/api/seminars/:seminar_id",
+    schema: {
+      tags: ["seminars"],
+      params: z.object({ seminar_id: z.uuid() }),
+      response: {
+        200: z.object({ message: z.string(), data: z.null() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await deleteSeminarHandler(request.params.seminar_id);
+    },
+  });
+
+  // DELETE /api/sessions/:id
+  typedApp.route({
+    method: "DELETE",
+    url: "/api/sessions/:id",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: z.object({ message: z.string(), data: z.null() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const session = await getSessionById(db, request.params.id);
+      if (!session) throw new ApiError(404, "Session not found");
+      return await deleteSessionHandler(session.seminar_id, request.params.id);
+    },
+  });
+
+  // POST /api/sessions/:id/publish
+  typedApp.route({
+    method: "POST",
+    url: "/api/sessions/:id/publish",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: SessionResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const session = await getSessionById(db, request.params.id);
+      if (!session) throw new ApiError(404, "Session not found");
+
+      const existingRecords = await getPublicationRecordsBySession(
+        db,
+        session.id,
+      );
+      if (session.published_at && existingRecords.length > 0) {
+        return sessionPayload(session);
+      }
+
+      const updatedSession = await updateSessionHandler(
+        session.seminar_id,
+        session.id,
+        {
+          published_at: new Date().toISOString(),
+        },
+      );
+
+      const seminarParticipants = await getSeminarParticipants(
+        db,
+        session.seminar_id,
+      );
+      const participantId =
+        seminarParticipants[0]?.participant_id ?? session.session_number;
+
+      await createPublicationRecord(db, {
+        session_id: session.id,
+        action: existingRecords.length === 0 ? "created" : "updated",
+        participant_id: participantId,
+        external_id: session.id,
+        status: "success",
+        error: null,
+      });
+
+      return updatedSession;
+    },
+  });
+
+  // POST /api/sessions/:id/archive
+  typedApp.route({
+    method: "POST",
+    url: "/api/sessions/:id/archive",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: SessionResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const session = await getSessionById(db, request.params.id);
+      if (!session) throw new ApiError(404, "Session not found");
+      return await updateSessionHandler(session.seminar_id, request.params.id, {
+        archived_at: new Date().toISOString(),
+      });
+    },
+  });
+
+  // PATCH /api/resources/:id
+  typedApp.route({
+    method: "PATCH",
+    url: "/api/resources/:id",
+    schema: {
+      tags: ["resources"],
+      params: z.object({ id: z.uuid() }),
+      body: ResourceUpdateSchema,
+      response: {
+        200: ResourceResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await updateResourceHandler(request.params.id, request.body);
+    },
+  });
+
+  // DELETE /api/resources/:id
+  typedApp.route({
+    method: "DELETE",
+    url: "/api/resources/:id",
+    schema: {
+      tags: ["resources"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: z.object({ message: z.string(), data: z.null() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const resource = await getResourceById(db, request.params.id);
+      if (!resource) throw new ApiError(404, "Resource not found");
+      return await deleteResourceHandler(
+        request.params.id,
+        resource.session_id,
+      );
+    },
+  });
+
+  // DELETE /api/assignments/:id
+  typedApp.route({
+    method: "DELETE",
+    url: "/api/assignments/:id",
+    schema: {
+      tags: ["assignments"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: z.object({ message: z.string(), data: z.null() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const assignment = await getAssignmentById(db, request.params.id);
+      if (!assignment) throw new ApiError(404, "Assignment not found");
+      return await deleteAssignmentHandler(
+        request.params.id,
+        assignment.session_id,
+      );
+    },
+  });
+
+  // PATCH /api/seminars/:seminar_id/participants/:participant_id
+  typedApp.route({
+    method: "PATCH",
+    url: "/api/seminars/:seminar_id/participants/:participant_id",
+    schema: {
+      tags: ["participants"],
+      params: z.object({
+        seminar_id: z.uuid(),
+        participant_id: z.number().int().positive(),
+      }),
+      body: ParticipantUpdateSchema,
+      response: {
+        200: ParticipantResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const participant = await getParticipantById(
+        db,
+        request.params.participant_id,
+      );
+      if (!participant) throw new ApiError(404, "Participant not found");
+      return await updateParticipantHandler(
+        request.params.seminar_id,
+        request.params.participant_id,
+        request.body,
+      );
+    },
+  });
+
+  // GET /api/publication-records/:id
+  typedApp.route({
+    method: "GET",
+    url: "/api/publication-records/:id",
+    schema: {
+      tags: ["publication-records"],
+      params: z.object({ id: z.number().int().positive() }),
+      response: {
+        200: PublicationRecordResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      const record = await getPublicationRecordById(db, request.params.id);
+      if (!record) throw new ApiError(404, "Publication record not found");
+      return await getPublicationRecordHandler(
+        request.params.id,
+        record.session_id,
+      );
+    },
   });
 
   return app;

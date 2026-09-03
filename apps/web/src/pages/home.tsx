@@ -1,4 +1,11 @@
-import { createSeminar, fetchSeminars, seminarQueryKeys } from "@/api";
+import {
+  createSeminar,
+  deleteSeminar,
+  fetchSeminars,
+  fetchSessions,
+  seminarQueryKeys,
+  sessionQueryKeys,
+} from "@/api";
 import { Layout } from "@/components/layout";
 import {
   AUTH_TOKEN_KEY,
@@ -24,11 +31,18 @@ import {
   Textarea,
 } from "@chakra-ui/react";
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { LuChevronRight } from "react-icons/lu";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { LuChevronRight, LuTrash2 } from "react-icons/lu";
 import { useNavigate } from "react-router";
 import { SeminarCreateSchema, type LogoutResponse } from "schemas";
+
+import { getSessionSummary } from "./home-session-summary";
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -43,6 +57,28 @@ const HomePage = () => {
     queryFn: fetchSeminars,
   });
 
+  const seminarSessionQueries = useQueries({
+    queries:
+      seminarsQuery.data?.map(({ data: seminar }) => ({
+        queryKey: sessionQueryKeys.list(seminar.id),
+        queryFn: () => fetchSessions(seminar.id),
+        enabled: !!seminar.id,
+      })) ?? [],
+  });
+
+  const seminarSummaries = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getSessionSummary>>();
+
+    seminarsQuery.data?.forEach(({ data: seminar }, index) => {
+      const query = seminarSessionQueries[index];
+      if (query?.data) {
+        map.set(seminar.id, getSessionSummary(query.data));
+      }
+    });
+
+    return map;
+  }, [seminarSessionQueries, seminarsQuery.data]);
+
   const createMutation = useMutation({
     mutationFn: createSeminar,
     onSuccess: () => {
@@ -50,6 +86,16 @@ const HomePage = () => {
       form.reset();
       setSubmitError(null);
       setIsCreateOpen(false);
+    },
+    onError: (error: Error) => {
+      setSubmitError(error.message);
+    },
+  });
+
+  const deleteSeminarMutation = useMutation({
+    mutationFn: deleteSeminar,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: seminarQueryKeys.all });
     },
     onError: (error: Error) => {
       setSubmitError(error.message);
@@ -128,16 +174,38 @@ const HomePage = () => {
 
   return (
     <Layout onLogout={handleLogout} isLoggingOut={isLoggingOut}>
-      <Flex align="center" justify="space-between" mb={6}>
-        <Heading as="h1" size="2xl" fontWeight="700" color="white">
+      <Flex
+        align="center"
+        justify="space-between"
+        wrap="wrap"
+        gap={3}
+        mb={6}
+        w="100%"
+        minW={0}
+      >
+        <Heading
+          as="h1"
+          size="2xl"
+          fontWeight="700"
+          color="white"
+          flex="1 1 220px"
+          minW={0}
+        >
           Dashboard
         </Heading>
-        <Text fontSize="sm" color="gray.400">
+        <Text
+          fontSize="sm"
+          color="gray.400"
+          whiteSpace="nowrap"
+          flex="0 1 auto"
+          minW={0}
+          textAlign="right"
+        >
           {seminarsQuery.data?.length ?? 0} active modules
         </Text>
       </Flex>
 
-      <Stack gap={4} maxW="1100px">
+      <Stack gap={4}>
         {seminarsQuery.isLoading ? (
           <Box
             borderRadius="xl"
@@ -206,7 +274,7 @@ const HomePage = () => {
                       Sessions
                     </Text>
                     <Text fontWeight="700" fontSize="lg" color="white">
-                      0 planned
+                      {seminarSummaries.get(seminar.id)?.planned ?? 0} planned
                     </Text>
                   </Stack>
 
@@ -220,22 +288,40 @@ const HomePage = () => {
                       Next session
                     </Text>
                     <Text fontWeight="700" fontSize="md" color="white">
-                      Not scheduled
+                      {seminarSummaries.get(seminar.id)?.nextSessionLabel ??
+                        "Not scheduled"}
                     </Text>
                   </Stack>
 
-                  <IconButton
-                    aria-label={`Open ${seminar.name}`}
-                    variant="ghost"
-                    borderRadius="full"
-                    color="gray.300"
-                    _hover={{ bg: "whiteAlpha.100" }}
-                    onClick={() => {
-                      navigate(`/seminars/${seminar.id}`);
-                    }}
-                  >
-                    <Icon as={LuChevronRight} boxSize={5} />
-                  </IconButton>
+                  <Flex align="center" gap={2}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      borderColor="red.400"
+                      color="red.300"
+                      _hover={{ bg: "red.950" }}
+                      loading={deleteSeminarMutation.isPending}
+                      disabled={deleteSeminarMutation.isPending}
+                      onClick={() => {
+                        void deleteSeminarMutation.mutateAsync(seminar.id);
+                      }}
+                    >
+                      <Icon as={LuTrash2} boxSize={4} />
+                      Delete
+                    </Button>
+                    <IconButton
+                      aria-label={`Open ${seminar.name}`}
+                      variant="ghost"
+                      borderRadius="full"
+                      color="gray.300"
+                      _hover={{ bg: "whiteAlpha.100" }}
+                      onClick={() => {
+                        navigate(`/seminars/${seminar.id}`);
+                      }}
+                    >
+                      <Icon as={LuChevronRight} boxSize={5} />
+                    </IconButton>
+                  </Flex>
                 </Flex>
               </Flex>
             </Box>

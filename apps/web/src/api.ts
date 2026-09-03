@@ -1,10 +1,13 @@
 import { authFetch, readApiErrorMessage } from "@/utils";
 import type {
+  AssignmentCreate,
   AssignmentResponse,
   ParticipantCreate,
   ParticipantResponse,
   PublicationRecordResponse,
+  ResourceCreate,
   ResourceResponse,
+  ResourceUpdate,
   SeminarCreate,
   SeminarResponse,
   SeminarUpdate,
@@ -123,6 +126,24 @@ export const createSeminar = async (
   return (await response.json()) as SeminarResponse;
 };
 
+export const deleteSeminar = async (
+  seminarId: string,
+): Promise<{ message: string; data: null }> => {
+  const response = await authFetch(`/api/seminars/${seminarId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to delete seminar.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { message: string; data: null };
+};
+
 export const fetchParticipants = async (): Promise<ParticipantResponse[]> => {
   const response = await authFetch("/api/participants");
 
@@ -154,10 +175,10 @@ export const fetchSeminarParticipants = async (
 };
 
 export const createParticipant = async (
-  seminarId: string,
+  _seminarId: string,
   payload: ParticipantCreate,
 ): Promise<ParticipantResponse> => {
-  const response = await authFetch(`/api/seminars/${seminarId}/participants`, {
+  const response = await authFetch("/api/participants", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -172,6 +193,26 @@ export const createParticipant = async (
   }
 
   return (await response.json()) as ParticipantResponse;
+};
+
+export const deleteParticipantFromSeminar = async (
+  seminarId: string,
+  participantId: number,
+): Promise<{ message: string; data: null }> => {
+  const response = await authFetch(
+    `/api/seminars/${seminarId}/participants/${participantId}`,
+    { method: "DELETE" },
+  );
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to remove participant.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { message: string; data: null };
 };
 
 export const fetchSessions = async (
@@ -191,12 +232,10 @@ export const fetchSessions = async (
 };
 
 export const fetchSessionById = async (
-  seminarId: string,
+  _seminarId: string,
   sessionId: string,
 ): Promise<SessionResponse> => {
-  const response = await authFetch(
-    `/api/seminars/${seminarId}/sessions/${sessionId}`,
-  );
+  const response = await authFetch(`/api/sessions/${sessionId}`);
 
   if (!response.ok) {
     const message = await readApiErrorMessage(
@@ -231,18 +270,15 @@ export const createSession = async (
 };
 
 export const updateSession = async (
-  seminarId: string,
+  _seminarId: string,
   sessionId: string,
   payload: SessionUpdate,
 ): Promise<SessionResponse> => {
-  const response = await authFetch(
-    `/api/seminars/${seminarId}/sessions/${sessionId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+  const response = await authFetch(`/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const message = await readApiErrorMessage(
@@ -258,7 +294,7 @@ export const updateSession = async (
 export const fetchResources = async (
   sessionId: string,
 ): Promise<ResourceResponse[]> => {
-  const response = await authFetch(`/api/resources?session_id=${sessionId}`);
+  const response = await authFetch(`/api/sessions/${sessionId}/resources`);
 
   if (!response.ok) {
     const message = await readApiErrorMessage(
@@ -271,10 +307,53 @@ export const fetchResources = async (
   return (await response.json()) as ResourceResponse[];
 };
 
+export const createResource = async (
+  sessionId: string,
+  payload: ResourceCreate,
+): Promise<ResourceResponse> => {
+  const response = await authFetch(`/api/sessions/${sessionId}/resources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, session_id: sessionId }),
+  });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to create resource.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as ResourceResponse;
+};
+
+export const updateResource = async (
+  sessionId: string,
+  resourceId: string,
+  payload: ResourceUpdate,
+): Promise<ResourceResponse> => {
+  const response = await authFetch(`/api/resources/${resourceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, session_id: sessionId }),
+  });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to update resource.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as ResourceResponse;
+};
+
 export const fetchAssignments = async (
   sessionId: string,
 ): Promise<AssignmentResponse[]> => {
-  const response = await authFetch(`/api/assignments?session_id=${sessionId}`);
+  const response = await authFetch(`/api/sessions/${sessionId}/assignments`);
 
   if (!response.ok) {
     const message = await readApiErrorMessage(
@@ -285,6 +364,27 @@ export const fetchAssignments = async (
   }
 
   return (await response.json()) as AssignmentResponse[];
+};
+
+export const createAssignment = async (
+  sessionId: string,
+  payload: AssignmentCreate,
+): Promise<AssignmentResponse> => {
+  const response = await authFetch(`/api/sessions/${sessionId}/assignments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, session_id: sessionId }),
+  });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to create assignment.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as AssignmentResponse;
 };
 
 export const fetchPublicationRecords = async (
@@ -317,12 +417,23 @@ export const saveSessionDraft = async (
 };
 
 export const publishSession = async (
-  seminarId: string,
+  _seminarId: string,
   sessionId: string,
   payload: SessionUpdate,
 ): Promise<SessionResponse> => {
-  return await updateSession(seminarId, sessionId, {
-    ...payload,
-    published_at: new Date().toISOString(),
+  const response = await authFetch(`/api/sessions/${sessionId}/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(
+      response,
+      "Unable to publish session.",
+    );
+    throw new Error(message);
+  }
+
+  return (await response.json()) as SessionResponse;
 };

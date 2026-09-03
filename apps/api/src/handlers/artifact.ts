@@ -7,7 +7,6 @@ import {
   deletePublicationRecord,
   deleteResource,
   getAssignmentById,
-  getAssignmentBySessionAndParticipant,
   getAssignmentsBySession,
   getPublicationRecordById,
   getPublicationRecordsBySession,
@@ -201,16 +200,18 @@ export const createAssignmentHandler = async (
 ): Promise<AssignmentResponse> => {
   await getSessionOrThrow(body.session_id);
 
-  const existingAssignment = await getAssignmentBySessionAndParticipant(
-    db,
-    body.session_id,
-    body.participant_id,
-  );
+  const existingAssignment = await db
+    .selectFrom("assignment")
+    .selectAll()
+    .where("session_id", "=", body.session_id)
+    .where("participant_id", "=", body.participant_id)
+    .where("resource_id", "=", body.resource_id)
+    .executeTakeFirst();
 
   if (existingAssignment) {
     throw new ApiError(
       409,
-      "Assignment already exists for this participant in the session",
+      "This participant already has this resource assigned in this session",
     );
   }
 

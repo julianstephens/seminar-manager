@@ -74,7 +74,9 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
         boxShadow="none"
         overflow="hidden"
         transition="all 0.3s ease"
-        position="relative"
+        position="sticky"
+        top={0}
+        alignSelf="flex-start"
       >
         <Box>
           <Flex
@@ -201,9 +203,11 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
       <Box
         as="main"
         flex="1"
+        minW={0}
         px={{ base: 6, md: 10, xl: 12 }}
         py={{ base: 8, md: 10 }}
         bg="black"
+        overflowY="auto"
       >
         {children}
       </Box>

@@ -1,4 +1,5 @@
 import type { PropsWithChildren } from "react";
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router";
 import type { ApiErrorResponse } from "schemas";
 
@@ -87,3 +88,14 @@ export const ProtectedRoute = ({ children }: PropsWithChildren) => {
 
   return <>{children} </>;
 };
+
+export function useDebounce<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+
+  return debounced;
+}

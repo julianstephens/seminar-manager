@@ -2,7 +2,7 @@ import { env } from "@/env";
 import { setupApp } from "@/server";
 
 const start = async () => {
-  const app = setupApp();
+  const app = await setupApp();
   try {
     await app.ready();
     await app.listen({ host: "0.0.0.0", port: env.PORT });

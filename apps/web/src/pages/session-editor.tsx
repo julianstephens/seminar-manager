@@ -1,5 +1,7 @@
 import {
   assignmentQueryKeys,
+  createAssignment,
+  createResource,
   fetchAssignments,
   fetchPublicationRecords,
   fetchResources,
@@ -8,10 +10,12 @@ import {
   fetchSessionById,
   participantQueryKeys,
   publicationRecordQueryKeys,
+  publishSession,
   resourceQueryKeys,
   saveSessionDraft,
   seminarQueryKeys,
   sessionQueryKeys,
+  updateResource,
   updateSession,
 } from "@/api";
 import { Layout } from "@/components/layout";
@@ -21,23 +25,33 @@ import {
   clearStoredToken,
   formatUtcTimestamp,
   readApiErrorMessage,
+  useDebounce,
 } from "@/utils";
 import {
   Alert,
   Box,
   Button,
+  CloseButton,
+  Dialog,
+  Field,
   Flex,
   Heading,
   Input,
+  Portal,
   Stack,
   Text,
 } from "@chakra-ui/react";
-import { useForm } from "@tanstack/react-form";
+import { useForm, useSelector } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LuFileText, LuLink, LuPlus } from "react-icons/lu";
 import { useNavigate, useParams } from "react-router";
-import { SessionUpdateSchema, type LogoutResponse } from "schemas";
+import {
+  AssignmentCreateSchema,
+  ResourceCreateSchema,
+  SessionUpdateSchema,
+  type LogoutResponse,
+} from "schemas";
 
 const toDateTimeInputValue = (isoValue: string) => {
   const parsed = new Date(isoValue);
@@ -63,9 +77,26 @@ const SessionEditorPage = () => {
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isAddResourceOpen, setIsAddResourceOpen] = useState(false);
+  const [editingResourceId, setEditingResourceId] = useState<string | null>(
+    null,
+  );
+  const [isAddAssignmentOpen, setIsAddAssignmentOpen] = useState(false);
+  const [resourceSubmitError, setResourceSubmitError] = useState<string | null>(
+    null,
+  );
+  const [assignmentSubmitError, setAssignmentSubmitError] = useState<
+    string | null
+  >(null);
   const [placeholderMessage, setPlaceholderMessage] = useState<string | null>(
     null,
   );
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const persistedValuesRef = useRef<{
+    title: string;
+    date: string;
+    status: "scheduled" | "completed" | "canceled";
+  } | null>(null);
 
   const seminarQuery = useQuery({
     queryKey: seminarQueryKeys.detail(seminarId ?? ""),
@@ -147,6 +178,13 @@ const SessionEditorPage = () => {
     },
   });
 
+  // string key is a stable primitive so useDebounce deps comparison works correctly
+  const autoSaveKey = useSelector(
+    form.store,
+    (s) => `${s.values.title}|${s.values.date}|${s.values.status}`,
+  );
+  const debouncedAutoSaveKey = useDebounce(autoSaveKey, 1500);
+
   const invalidateEditorQueries = async () => {
     if (!seminarId || !sessionId) {
       return;
@@ -201,9 +239,252 @@ const SessionEditorPage = () => {
       await invalidateEditorQueries();
       form.setFieldValue("published", false);
       setSubmitError(null);
+      setLastSavedAt(new Date());
+      persistedValuesRef.current = {
+        title: response.data.title.trim(),
+        date: toDateTimeInputValue(response.data.date),
+        status: response.data.status,
+      };
     },
     onError: (error: Error) => {
       setSubmitError(error.message);
+    },
+  });
+
+  const resourceForm = useForm({
+    defaultValues: {
+      name: "",
+      url: "",
+      visibility: "private" as "public" | "private",
+    },
+    onSubmit: async ({ value }) => {
+      if (!sessionId) {
+        return;
+      }
+
+      setResourceSubmitError(null);
+
+      const parsed = ResourceCreateSchema.safeParse({
+        session_id: sessionId,
+        name: value.name.trim(),
+        url: value.url.trim(),
+        visibility: value.visibility,
+      });
+
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        setResourceSubmitError(
+          issue?.message ?? "Please complete the required resource fields.",
+        );
+        return;
+      }
+
+      await saveResourceMutation.mutateAsync(parsed.data);
+    },
+  });
+
+  const saveResourceMutation = useMutation({
+    mutationFn: (payload: {
+      session_id: string;
+      name: string;
+      url: string;
+      visibility: "public" | "private";
+    }) => {
+      if (editingResourceId) {
+        return updateResource(sessionId ?? "", editingResourceId, payload);
+      }
+
+      return createResource(sessionId ?? "", payload);
+    },
+    onSuccess: async (response) => {
+      if (!sessionId) {
+        return;
+      }
+
+      void queryClient.setQueryData(
+        resourceQueryKeys.list(sessionId),
+        (current: { data: { id: string } }[] | undefined) => {
+          const next = current ?? [];
+
+          if (editingResourceId) {
+            return next.map((entry) =>
+              entry.data.id === response.data.id ? response : entry,
+            );
+          }
+
+          return [...next, response];
+        },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: resourceQueryKeys.list(sessionId),
+      });
+      resourceForm.reset();
+      setEditingResourceId(null);
+      setResourceSubmitError(null);
+      setIsAddResourceOpen(false);
+    },
+    onError: (error: Error) => {
+      setResourceSubmitError(error.message);
+    },
+  });
+
+  const assignmentForm = useForm({
+    defaultValues: {
+      participant_id: "",
+      resource_id: "",
+      assign_to_everyone: false,
+    },
+    onSubmit: async ({ value }) => {
+      if (!sessionId) {
+        return;
+      }
+
+      setAssignmentSubmitError(null);
+
+      if (!value.resource_id) {
+        setAssignmentSubmitError("Please select a resource.");
+        return;
+      }
+
+      if (value.assign_to_everyone) {
+        const selectedResource = resources.find(
+          ({ data: resource }) => resource.id === value.resource_id,
+        )?.data;
+
+        if (selectedResource && selectedResource.visibility !== "public") {
+          const updatedResource = await updateResource(
+            sessionId,
+            value.resource_id,
+            {
+              visibility: "public",
+            },
+          );
+
+          void queryClient.setQueryData(
+            resourceQueryKeys.list(sessionId),
+            (
+              current:
+                | { data: { id: string; visibility: "public" | "private" } }[]
+                | undefined,
+            ) =>
+              (current ?? []).map((resource) =>
+                resource.data.id === value.resource_id
+                  ? {
+                      ...resource,
+                      data: {
+                        ...resource.data,
+                        visibility: updatedResource.data.visibility,
+                      },
+                    }
+                  : resource,
+              ),
+          );
+        }
+
+        const targetParticipants = participants.filter(
+          ({ data: participant }) =>
+            !assignments.some(
+              ({ data: assignment }) =>
+                assignment.participant_id === participant.id &&
+                assignment.resource_id === value.resource_id,
+            ),
+        );
+
+        if (targetParticipants.length === 0) {
+          setAssignmentSubmitError(
+            "This resource is already assigned to every participant.",
+          );
+          return;
+        }
+
+        await createAssignmentMutation.mutateAsync({
+          session_id: sessionId,
+          participant_ids: targetParticipants.map(
+            ({ data: participant }) => participant.id,
+          ),
+          resource_id: value.resource_id,
+        });
+        return;
+      }
+
+      if (!value.participant_id) {
+        setAssignmentSubmitError("Please select a participant.");
+        return;
+      }
+
+      const parsed = AssignmentCreateSchema.safeParse({
+        session_id: sessionId,
+        participant_id: Number(value.participant_id),
+        resource_id: value.resource_id,
+      });
+
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        setAssignmentSubmitError(
+          issue?.message ?? "Please select a participant and resource.",
+        );
+        return;
+      }
+
+      await createAssignmentMutation.mutateAsync(parsed.data);
+    },
+  });
+
+  const createAssignmentMutation = useMutation({
+    mutationFn: async (
+      payload:
+        | { session_id: string; participant_id: number; resource_id: string }
+        | {
+            session_id: string;
+            participant_ids: number[];
+            resource_id: string;
+          },
+    ) => {
+      if ("participant_ids" in payload) {
+        const createdAssignments: Awaited<
+          ReturnType<typeof createAssignment>
+        >[] = [];
+
+        for (const participantId of payload.participant_ids) {
+          createdAssignments.push(
+            await createAssignment(sessionId ?? "", {
+              session_id: payload.session_id,
+              participant_id: participantId,
+              resource_id: payload.resource_id,
+            }),
+          );
+        }
+
+        return createdAssignments;
+      }
+
+      return await createAssignment(sessionId ?? "", payload);
+    },
+    onSuccess: async (response) => {
+      if (!sessionId) {
+        return;
+      }
+
+      const createdAssignments = Array.isArray(response)
+        ? response
+        : [response];
+
+      void queryClient.setQueryData(
+        assignmentQueryKeys.list(sessionId),
+        (current: { data: { id: string } }[] | undefined) => {
+          const next = current ?? [];
+          return [...next, ...createdAssignments];
+        },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: assignmentQueryKeys.list(sessionId),
+      });
+      assignmentForm.reset();
+      setAssignmentSubmitError(null);
+      setIsAddAssignmentOpen(false);
+    },
+    onError: (error: Error) => {
+      setAssignmentSubmitError(error.message);
     },
   });
 
@@ -213,7 +494,7 @@ const SessionEditorPage = () => {
       date: string;
       status: "scheduled" | "completed" | "canceled";
     }) =>
-      updateSession(seminarId ?? "", sessionId ?? "", {
+      publishSession(seminarId ?? "", sessionId ?? "", {
         ...payload,
         published_at: new Date().toISOString(),
       }),
@@ -223,6 +504,9 @@ const SessionEditorPage = () => {
         response,
       );
       await invalidateEditorQueries();
+      await queryClient.invalidateQueries({
+        queryKey: publicationRecordQueryKeys.list(sessionId ?? ""),
+      });
       form.setFieldValue("published", true);
       setSubmitError(null);
     },
@@ -230,6 +514,9 @@ const SessionEditorPage = () => {
       setSubmitError(error.message);
     },
   });
+
+  const isPublishingRef = useRef(false);
+  isPublishingRef.current = publishMutation.isPending;
 
   useEffect(() => {
     if (!session) {
@@ -239,7 +526,58 @@ const SessionEditorPage = () => {
     form.setFieldValue("date", toDateTimeInputValue(session.date));
     form.setFieldValue("status", session.status);
     form.setFieldValue("published", Boolean(session.published_at));
+    persistedValuesRef.current = {
+      title: session.title.trim(),
+      date: toDateTimeInputValue(session.date),
+      status: session.status,
+    };
   }, [form, session]);
+
+  useEffect(() => {
+    if (!participants.length || assignmentForm.state.values.participant_id) {
+      return;
+    }
+
+    assignmentForm.setFieldValue(
+      "participant_id",
+      String(participants[0]?.data.id ?? ""),
+    );
+  }, [assignmentForm, participants]);
+
+  useEffect(() => {
+    if (!resources.length || assignmentForm.state.values.resource_id) {
+      return;
+    }
+
+    assignmentForm.setFieldValue("resource_id", resources[0]?.data.id ?? "");
+  }, [assignmentForm, resources]);
+
+  useEffect(() => {
+    const pv = persistedValuesRef.current;
+    if (!pv || !seminarId || !sessionId || isPublishingRef.current) {
+      return;
+    }
+
+    const values = form.state.values;
+    if (
+      values.title.trim() === pv.title &&
+      values.date === pv.date &&
+      values.status === pv.status
+    ) {
+      return;
+    }
+
+    const nextDate = fromDateTimeInputValue(values.date);
+    if (!nextDate) {
+      return;
+    }
+
+    void draftMutation.mutateAsync({
+      title: values.title.trim(),
+      date: nextDate,
+      status: values.status,
+    });
+  }, [debouncedAutoSaveKey, seminarId, sessionId]);
 
   const participantById = useMemo(() => {
     return new Map(participants.map(({ data }) => [data.id, data] as const));
@@ -248,6 +586,27 @@ const SessionEditorPage = () => {
   const resourceById = useMemo(() => {
     return new Map(resources.map(({ data }) => [data.id, data] as const));
   }, [resources]);
+
+  const openCreateResourceDialog = () => {
+    setEditingResourceId(null);
+    setResourceSubmitError(null);
+    resourceForm.reset();
+    setIsAddResourceOpen(true);
+  };
+
+  const openEditResourceDialog = (resource: {
+    id: string;
+    name: string;
+    url: string;
+    visibility: "public" | "private";
+  }) => {
+    setEditingResourceId(resource.id);
+    setResourceSubmitError(null);
+    resourceForm.setFieldValue("name", resource.name);
+    resourceForm.setFieldValue("url", resource.url);
+    resourceForm.setFieldValue("visibility", resource.visibility);
+    setIsAddResourceOpen(true);
+  };
 
   const handlePlaceholderClick = (label: string) => {
     setPlaceholderMessage(`${label} will be wired in a later iteration.`);
@@ -518,14 +877,232 @@ const SessionEditorPage = () => {
                   >
                     Shared Resources
                   </Text>
-                  <Button
-                    variant="ghost"
-                    color="var(--accent-soft)"
-                    onClick={() => handlePlaceholderClick("Add Resource")}
+                  <Dialog.Root
+                    open={isAddResourceOpen}
+                    onOpenChange={(details) => {
+                      if (!details.open) {
+                        setEditingResourceId(null);
+                        setResourceSubmitError(null);
+                        resourceForm.reset();
+                      }
+                      setIsAddResourceOpen(details.open);
+                    }}
+                    size="lg"
                   >
-                    <LuPlus />
-                    Add Resource
-                  </Button>
+                    <Dialog.Trigger asChild>
+                      <Button
+                        variant="ghost"
+                        color="var(--accent-soft)"
+                        onClick={openCreateResourceDialog}
+                      >
+                        <LuPlus />
+                        Add Resource
+                      </Button>
+                    </Dialog.Trigger>
+
+                    <Portal>
+                      <Dialog.Backdrop
+                        bg="rgba(2, 2, 3, 0.72)"
+                        backdropFilter="blur(8px)"
+                      />
+                      <Dialog.Positioner>
+                        <Dialog.Content
+                          bg="linear-gradient(180deg, rgba(18, 18, 20, 0.94) 0%, rgba(10, 10, 12, 0.88) 100%)"
+                          color="white"
+                          border="1px solid"
+                          borderColor="rgba(255, 255, 255, 0.12)"
+                          borderRadius="2xl"
+                          boxShadow="0 24px 48px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.04)"
+                          backdropFilter="blur(18px)"
+                        >
+                          <Dialog.Header px={6} pt={6} pb={0}>
+                            <Heading as="h2" size="lg">
+                              {editingResourceId
+                                ? "Edit resource"
+                                : "Add resource"}
+                            </Heading>
+                            <Dialog.CloseTrigger asChild>
+                              <CloseButton
+                                size="sm"
+                                color="gray.300"
+                                _hover={{ bg: "whiteAlpha.100" }}
+                              />
+                            </Dialog.CloseTrigger>
+                          </Dialog.Header>
+
+                          <Dialog.Body px={6} py={6}>
+                            <form
+                              id="resource-create-form"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void resourceForm.handleSubmit();
+                              }}
+                            >
+                              <Stack gap={4}>
+                                <resourceForm.Field name="name">
+                                  {(field) => (
+                                    <Field.Root
+                                      invalid={
+                                        field.state.meta.errors.length > 0
+                                      }
+                                    >
+                                      <Field.Label>Resource name</Field.Label>
+                                      <Input
+                                        value={field.state.value}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(event.target.value)
+                                        }
+                                        placeholder="Reading list"
+                                        bg="black"
+                                        borderColor={
+                                          field.state.meta.errors.length > 0
+                                            ? "red.400"
+                                            : "whiteAlpha.200"
+                                        }
+                                      />
+                                      {field.state.meta.errors.length > 0 ? (
+                                        <Field.ErrorText>
+                                          {field.state.meta.errors.join(", ")}
+                                        </Field.ErrorText>
+                                      ) : null}
+                                    </Field.Root>
+                                  )}
+                                </resourceForm.Field>
+
+                                <resourceForm.Field name="url">
+                                  {(field) => (
+                                    <Field.Root
+                                      invalid={
+                                        field.state.meta.errors.length > 0
+                                      }
+                                    >
+                                      <Field.Label>Resource URL</Field.Label>
+                                      <Input
+                                        value={field.state.value}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(event.target.value)
+                                        }
+                                        placeholder="https://example.com/resource"
+                                        bg="black"
+                                        borderColor={
+                                          field.state.meta.errors.length > 0
+                                            ? "red.400"
+                                            : "whiteAlpha.200"
+                                        }
+                                      />
+                                      {field.state.meta.errors.length > 0 ? (
+                                        <Field.ErrorText>
+                                          {field.state.meta.errors.join(", ")}
+                                        </Field.ErrorText>
+                                      ) : null}
+                                    </Field.Root>
+                                  )}
+                                </resourceForm.Field>
+
+                                <resourceForm.Field name="visibility">
+                                  {(field) => (
+                                    <Field.Root
+                                      invalid={
+                                        field.state.meta.errors.length > 0
+                                      }
+                                    >
+                                      <Field.Label>Visibility</Field.Label>
+                                      <select
+                                        value={field.state.value}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(
+                                            event.target.value as
+                                              "public" | "private",
+                                          )
+                                        }
+                                        style={{
+                                          width: "100%",
+                                          backgroundColor: "black",
+                                          border: `1px solid ${
+                                            field.state.meta.errors.length > 0
+                                              ? "#f56565"
+                                              : "rgba(255,255,255,0.2)"
+                                          }`,
+                                          borderRadius: "0.375rem",
+                                          color: "white",
+                                          padding: "0.625rem 0.75rem",
+                                        }}
+                                      >
+                                        <option value="private">Private</option>
+                                        <option value="public">Public</option>
+                                      </select>
+                                      {field.state.meta.errors.length > 0 ? (
+                                        <Field.ErrorText>
+                                          {field.state.meta.errors.join(", ")}
+                                        </Field.ErrorText>
+                                      ) : null}
+                                    </Field.Root>
+                                  )}
+                                </resourceForm.Field>
+
+                                {resourceSubmitError ? (
+                                  <Alert.Root
+                                    status="error"
+                                    bg="red.950"
+                                    borderColor="red.500"
+                                    color="red.100"
+                                  >
+                                    <Alert.Indicator />
+                                    <Alert.Content>
+                                      <Alert.Title>
+                                        {editingResourceId
+                                          ? "Unable to save resource"
+                                          : "Unable to add resource"}
+                                      </Alert.Title>
+                                      <Alert.Description>
+                                        {resourceSubmitError}
+                                      </Alert.Description>
+                                    </Alert.Content>
+                                  </Alert.Root>
+                                ) : null}
+                              </Stack>
+                            </form>
+                          </Dialog.Body>
+
+                          <Dialog.Footer px={6} pb={6} pt={0}>
+                            <Button
+                              variant="ghost"
+                              color="gray.300"
+                              onClick={() => {
+                                setEditingResourceId(null);
+                                setResourceSubmitError(null);
+                                resourceForm.reset();
+                                setIsAddResourceOpen(false);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              form="resource-create-form"
+                              bg="white"
+                              color="black"
+                              _hover={{ bg: "gray.200" }}
+                              loading={saveResourceMutation.isPending}
+                              disabled={saveResourceMutation.isPending}
+                            >
+                              {saveResourceMutation.isPending
+                                ? editingResourceId
+                                  ? "Saving..."
+                                  : "Adding..."
+                                : editingResourceId
+                                  ? "Save changes"
+                                  : "Add resource"}
+                            </Button>
+                          </Dialog.Footer>
+                        </Dialog.Content>
+                      </Dialog.Positioner>
+                    </Portal>
+                  </Dialog.Root>
                 </Flex>
 
                 <Stack gap={2}>
@@ -563,9 +1140,7 @@ const SessionEditorPage = () => {
                           <Button
                             size="xs"
                             variant="ghost"
-                            onClick={() =>
-                              handlePlaceholderClick("Edit Resource")
-                            }
+                            onClick={() => openEditResourceDialog(resource)}
                           >
                             Edit
                           </Button>
@@ -605,14 +1180,235 @@ const SessionEditorPage = () => {
                   >
                     Assignments
                   </Text>
-                  <Button
-                    variant="ghost"
-                    color="var(--accent-soft)"
-                    onClick={() => handlePlaceholderClick("Add Assignment")}
+                  <Dialog.Root
+                    open={isAddAssignmentOpen}
+                    onOpenChange={(details) =>
+                      setIsAddAssignmentOpen(details.open)
+                    }
+                    size="lg"
                   >
-                    <LuPlus />
-                    Add Assignment
-                  </Button>
+                    <Dialog.Trigger asChild>
+                      <Button variant="ghost" color="var(--accent-soft)">
+                        <LuPlus />
+                        Add Assignment
+                      </Button>
+                    </Dialog.Trigger>
+
+                    <Portal>
+                      <Dialog.Backdrop
+                        bg="rgba(2, 2, 3, 0.72)"
+                        backdropFilter="blur(8px)"
+                      />
+                      <Dialog.Positioner>
+                        <Dialog.Content
+                          bg="linear-gradient(180deg, rgba(18, 18, 20, 0.94) 0%, rgba(10, 10, 12, 0.88) 100%)"
+                          color="white"
+                          border="1px solid"
+                          borderColor="rgba(255, 255, 255, 0.12)"
+                          borderRadius="2xl"
+                          boxShadow="0 24px 48px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.04)"
+                          backdropFilter="blur(18px)"
+                        >
+                          <Dialog.Header px={6} pt={6} pb={0}>
+                            <Heading as="h2" size="lg">
+                              Add assignment
+                            </Heading>
+                            <Dialog.CloseTrigger asChild>
+                              <CloseButton
+                                size="sm"
+                                color="gray.300"
+                                _hover={{ bg: "whiteAlpha.100" }}
+                              />
+                            </Dialog.CloseTrigger>
+                          </Dialog.Header>
+
+                          <Dialog.Body px={6} py={6}>
+                            <form
+                              id="assignment-create-form"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void assignmentForm.handleSubmit();
+                              }}
+                            >
+                              <Stack gap={4}>
+                                <assignmentForm.Field name="resource_id">
+                                  {(field) => (
+                                    <Field.Root
+                                      invalid={
+                                        field.state.meta.errors.length > 0
+                                      }
+                                    >
+                                      <Field.Label>Resource</Field.Label>
+                                      <select
+                                        value={field.state.value}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(event.target.value)
+                                        }
+                                        style={{
+                                          width: "100%",
+                                          backgroundColor: "black",
+                                          border: `1px solid ${
+                                            field.state.meta.errors.length > 0
+                                              ? "#f56565"
+                                              : "rgba(255,255,255,0.2)"
+                                          }`,
+                                          borderRadius: "0.375rem",
+                                          color: "white",
+                                          padding: "0.625rem 0.75rem",
+                                        }}
+                                      >
+                                        <option value="">
+                                          Select a resource
+                                        </option>
+                                        {resources.map(({ data: resource }) => (
+                                          <option
+                                            key={resource.id}
+                                            value={resource.id}
+                                          >
+                                            {resource.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {field.state.meta.errors.length > 0 ? (
+                                        <Field.ErrorText>
+                                          {field.state.meta.errors.join(", ")}
+                                        </Field.ErrorText>
+                                      ) : null}
+                                    </Field.Root>
+                                  )}
+                                </assignmentForm.Field>
+
+                                <assignmentForm.Field name="assign_to_everyone">
+                                  {(field) => (
+                                    <label
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.75rem",
+                                        color: "white",
+                                        fontWeight: 500,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={field.state.value}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(
+                                            event.target.checked,
+                                          )
+                                        }
+                                      />
+                                      Assign to everyone
+                                    </label>
+                                  )}
+                                </assignmentForm.Field>
+
+                                {!assignmentForm.state.values
+                                  .assign_to_everyone ? (
+                                  <assignmentForm.Field name="participant_id">
+                                    {(field) => (
+                                      <Field.Root
+                                        invalid={
+                                          field.state.meta.errors.length > 0
+                                        }
+                                      >
+                                        <Field.Label>Participant</Field.Label>
+                                        <select
+                                          value={field.state.value}
+                                          onBlur={field.handleBlur}
+                                          onChange={(event) =>
+                                            field.handleChange(
+                                              event.target.value,
+                                            )
+                                          }
+                                          style={{
+                                            width: "100%",
+                                            backgroundColor: "black",
+                                            border: `1px solid ${
+                                              field.state.meta.errors.length > 0
+                                                ? "#f56565"
+                                                : "rgba(255,255,255,0.2)"
+                                            }`,
+                                            borderRadius: "0.375rem",
+                                            color: "white",
+                                            padding: "0.625rem 0.75rem",
+                                          }}
+                                        >
+                                          <option value="">
+                                            Select a participant
+                                          </option>
+                                          {participants.map(
+                                            ({ data: participant }) => (
+                                              <option
+                                                key={participant.id}
+                                                value={String(participant.id)}
+                                              >
+                                                {participant.name}
+                                              </option>
+                                            ),
+                                          )}
+                                        </select>
+                                        {field.state.meta.errors.length > 0 ? (
+                                          <Field.ErrorText>
+                                            {field.state.meta.errors.join(", ")}
+                                          </Field.ErrorText>
+                                        ) : null}
+                                      </Field.Root>
+                                    )}
+                                  </assignmentForm.Field>
+                                ) : null}
+
+                                {assignmentSubmitError ? (
+                                  <Alert.Root
+                                    status="error"
+                                    bg="red.950"
+                                    borderColor="red.500"
+                                    color="red.100"
+                                  >
+                                    <Alert.Indicator />
+                                    <Alert.Content>
+                                      <Alert.Title>
+                                        Unable to add assignment
+                                      </Alert.Title>
+                                      <Alert.Description>
+                                        {assignmentSubmitError}
+                                      </Alert.Description>
+                                    </Alert.Content>
+                                  </Alert.Root>
+                                ) : null}
+                              </Stack>
+                            </form>
+                          </Dialog.Body>
+
+                          <Dialog.Footer px={6} pb={6} pt={0}>
+                            <Button
+                              variant="ghost"
+                              color="gray.300"
+                              onClick={() => setIsAddAssignmentOpen(false)}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              form="assignment-create-form"
+                              bg="white"
+                              color="black"
+                              _hover={{ bg: "gray.200" }}
+                              loading={createAssignmentMutation.isPending}
+                              disabled={createAssignmentMutation.isPending}
+                            >
+                              {createAssignmentMutation.isPending
+                                ? "Adding..."
+                                : "Add assignment"}
+                            </Button>
+                          </Dialog.Footer>
+                        </Dialog.Content>
+                      </Dialog.Positioner>
+                    </Portal>
+                  </Dialog.Root>
                 </Flex>
 
                 <Stack gap={2}>
@@ -779,9 +1575,11 @@ const SessionEditorPage = () => {
             wrap="wrap"
           >
             <Text color="gray.400" fontSize="sm">
-              {isAnySavePending
-                ? "Saving changes..."
-                : "Draft auto-save is not enabled yet."}
+              {draftMutation.isPending
+                ? "Saving draft…"
+                : lastSavedAt !== null
+                  ? `Draft saved at ${lastSavedAt.toLocaleTimeString()}`
+                  : "Changes will be auto-saved."}
             </Text>
             <Flex gap={3}>
               <Button
@@ -808,7 +1606,7 @@ const SessionEditorPage = () => {
                 disabled={isAnySavePending}
                 loading={draftMutation.isPending}
               >
-                Save Draft
+                Save Now
               </Button>
               <Button
                 bg="var(--accent-soft)"
@@ -831,10 +1629,10 @@ const SessionEditorPage = () => {
                     status: form.state.values.status,
                   });
                 }}
-                disabled={isAnySavePending}
+                disabled={isAnySavePending || Boolean(session?.published_at)}
                 loading={publishMutation.isPending}
               >
-                Publish Session
+                {session?.published_at ? "Published" : "Publish Session"}
               </Button>
             </Flex>
           </Flex>
