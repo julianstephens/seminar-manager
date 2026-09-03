@@ -25,7 +25,7 @@ export const toRequestErrorResponse = (
   details?: Record<string, unknown>,
 ): ApiErrorResponse =>
   toStandardErrorResponse(status_code, message, {
-    ...(details ?? {}),
+    ...details,
     method: req.method,
     url: req.url,
   });

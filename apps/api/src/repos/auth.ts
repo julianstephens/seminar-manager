@@ -76,7 +76,7 @@ export const createAuthSession = async (
       user_id: userId,
       client_fingerprint: clientFingerprint,
       access_token_hash,
-      expires_at: Math.floor(Date.now() / 1000) + DEFAULT_EXPIRES_IN,
+      expires_at: new Date(Date.now() + DEFAULT_EXPIRES_IN * 1000),
       status: "active",
     })
     .execute();

@@ -1,4 +1,5 @@
 import db from "@/db";
+import { ApiError } from "@/handlers";
 import {
   createAuthSession,
   createUser,
@@ -10,16 +11,6 @@ import {
   revokeAuthSession,
 } from "@/repos/auth";
 import type { LoginRequest, LoginResponse } from "schemas";
-
-export class ApiError extends Error {
-  statusCode: number;
-
-  constructor(statusCode: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.statusCode = statusCode;
-  }
-}
 
 export class InvalidSessionError extends ApiError {
   constructor(message = "Invalid session") {

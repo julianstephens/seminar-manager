@@ -8,28 +8,8 @@ export const ApiErrorResponseSchema = z.object({
 });
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 
-export const LoginSchema = z.object({
-  client_fingerprint: z.string().min(1, "Client fingerprint is required"),
-  password: z.string().min(1, "Password is required"),
-});
-export type LoginRequest = z.infer<typeof LoginSchema>;
-
-export const LoginResponseSchema = z.object({
-  access_token: z.string().min(1, "Access token is required"),
-  expires_in: z.number().min(1, "Expiration time is required"),
-});
-export type LoginResponse = z.infer<typeof LoginResponseSchema>;
-
-export const LogoutSchema = z.object({
-  access_token: z.string().min(1, "Access token is required"),
-});
-export type LogoutRequest = z.infer<typeof LogoutSchema>;
-
-export const LogoutResponseSchema = z.object({
-  success: z.boolean(),
+export const ApiResponseSchema = z.object({
   message: z.string().optional(),
+  data: z.any(),
 });
-export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;
-
-export const LogoutErrorResponseSchema = ApiErrorResponseSchema;
-export type LogoutErrorResponse = ApiErrorResponse;
+export type ApiResponse = z.infer<typeof ApiResponseSchema>;
