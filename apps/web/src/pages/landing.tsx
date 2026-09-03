@@ -70,8 +70,8 @@ const LandingPage = () => {
     <Box className="auth-shell" minH="100vh" bg="black" color="white">
       <Container maxW="lg" py={{ base: 16, md: 24 }}>
         <Box
-          className="auth-panel"
-          bg="whiteAlpha.50"
+          className="auth-panel glass-panel"
+          bg="transparent"
           border="1px solid"
           borderColor="whiteAlpha.200"
           borderRadius="2xl"
@@ -122,7 +122,8 @@ const LandingPage = () => {
                           }
                           placeholder="Enter admin password"
                           size="lg"
-                          bg="black"
+                          className="glass-field"
+                          bg="transparent"
                           borderColor={
                             field.state.meta.errors.length > 0
                               ? "red.400"
@@ -161,9 +162,9 @@ const LandingPage = () => {
                 <Button
                   type="submit"
                   size="lg"
-                  bg="white"
-                  color="black"
-                  _hover={{ bg: "gray.200" }}
+                  bg="var(--accent-soft)"
+                  color="#111111"
+                  _hover={{ bg: "var(--accent-soft-strong)" }}
                   loading={isSubmitting}
                   disabled={isSubmitting}
                 >

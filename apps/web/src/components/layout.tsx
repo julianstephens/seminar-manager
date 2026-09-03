@@ -43,8 +43,9 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
   return (
     <Box
       minH="100vh"
-      bg="black"
+      className="app-canvas"
       display="flex"
+      flexDirection={{ base: "column", md: "row" }}
       color="white"
       position="relative"
       style={
@@ -60,11 +61,11 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
           base: isSidebarOpen ? "100%" : "0",
           md: sidebarWidth,
         }}
-        minH="100vh"
+        minH={{ base: "auto", md: "100vh" }}
         bg="var(--sidebar-bg)"
         color="white"
         px={isSidebarOpen ? 4 : 0}
-        py={4}
+        py={{ base: 3, md: 4 }}
         display="flex"
         flexDirection="column"
         justifyContent="space-between"
@@ -74,9 +75,9 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
         boxShadow="none"
         overflow="hidden"
         transition="all 0.3s ease"
-        position="sticky"
+        position={{ base: "relative", md: "sticky" }}
         top={0}
-        alignSelf="flex-start"
+        alignSelf={{ base: "stretch", md: "flex-start" }}
       >
         <Box>
           <Flex
@@ -85,7 +86,7 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
             gap={3}
             px={isSidebarOpen ? 2 : 0}
             py={2}
-            mb={isSidebarOpen ? 6 : 4}
+            mb={{ base: 3, md: isSidebarOpen ? 6 : 4 }}
           >
             {isSidebarOpen && (
               <Flex align="center" gap={3}>
@@ -126,10 +127,11 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
           </Flex>
 
           <Stack
-            gap={2}
+            gap={{ base: 1, md: 2 }}
             w={isSidebarOpen ? "auto" : "60px"}
             align={isSidebarOpen ? "stretch" : "center"}
             mx={isSidebarOpen ? 0 : "auto"}
+            direction={{ base: "row", md: "column" }}
           >
             {navItems.map(({ label, icon, path }) => {
               const active = location.pathname === path;
@@ -139,7 +141,10 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
                   key={label}
                   className="sidebar-nav-item"
                   variant={active ? "surface" : "ghost"}
-                  justifyContent={isSidebarOpen ? "flex-start" : "center"}
+                  justifyContent={{
+                    base: "center",
+                    md: isSidebarOpen ? "flex-start" : "center",
+                  }}
                   alignItems="center"
                   py={3}
                   px={isSidebarOpen ? 3 : 2}
@@ -159,7 +164,7 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
                   onClick={() => {
                     navigate(path);
                   }}
-                  w={isSidebarOpen ? "auto" : "44px"}
+                  w={{ base: "full", md: isSidebarOpen ? "auto" : "44px" }}
                   title={isSidebarOpen ? "" : label}
                 >
                   <Icon as={icon} boxSize={4} />
@@ -171,6 +176,7 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
         </Box>
 
         <Flex
+          display={{ base: "none", md: "flex" }}
           alignItems="center"
           justifyContent={isSidebarOpen ? "flex-start" : "center"}
           pt={4}
@@ -206,7 +212,7 @@ export const Layout = ({ children, onLogout, isLoggingOut }: LayoutProps) => {
         minW={0}
         px={{ base: 6, md: 10, xl: 12 }}
         py={{ base: 8, md: 10 }}
-        bg="black"
+        className="app-canvas"
         overflowY="auto"
       >
         {children}

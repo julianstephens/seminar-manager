@@ -403,11 +403,12 @@ const SeminarDetailPage = () => {
   return (
     <Layout onLogout={handleLogout} isLoggingOut={isLoggingOut}>
       <Box
-        bg="black"
+        className="app-canvas"
+        bg="transparent"
         minH="0"
         overflowY="hidden"
-        px={{ base: 6, md: 10 }}
-        py={{ base: 8, md: 10 }}
+        px={0}
+        py={0}
         color="white"
       >
         <Stack gap={8} maxW="1100px" mx="auto">
@@ -436,8 +437,9 @@ const SeminarDetailPage = () => {
                             }
                             onBlur={field.handleBlur}
                             placeholder="Seminar title"
-                            bg="whiteAlpha.50"
-                            borderColor="whiteAlpha.200"
+                            className="glass-field"
+                            bg="transparent"
+                            borderColor="transparent"
                             color="white"
                             _placeholder={{ color: "gray.400" }}
                             flex="1"
@@ -451,9 +453,9 @@ const SeminarDetailPage = () => {
                         onClick={() => {
                           void form.handleSubmit();
                         }}
-                        bg="white"
-                        color="black"
-                        _hover={{ bg: "gray.200" }}
+                        bg="var(--accent-soft)"
+                        color="#111111"
+                        _hover={{ bg: "var(--accent-soft-strong)" }}
                         disabled={updateMutation.isPending}
                       >
                         {updateMutation.isPending ? "Saving…" : "Save"}
@@ -514,8 +516,9 @@ const SeminarDetailPage = () => {
                             }
                             onBlur={field.handleBlur}
                             placeholder="Add a description"
-                            bg="whiteAlpha.50"
-                            borderColor="whiteAlpha.200"
+                            className="glass-field"
+                            bg="transparent"
+                            borderColor="transparent"
                             color="white"
                             minH="120px"
                             resize="vertical"
@@ -532,9 +535,9 @@ const SeminarDetailPage = () => {
                           onClick={() => {
                             void form.handleSubmit();
                           }}
-                          bg="white"
-                          color="black"
-                          _hover={{ bg: "gray.200" }}
+                          bg="var(--accent-soft)"
+                          color="#111111"
+                          _hover={{ bg: "var(--accent-soft-strong)" }}
                           disabled={updateMutation.isPending}
                         >
                           <Icon as={LuCheck} boxSize={4} />
@@ -700,13 +703,14 @@ const SeminarDetailPage = () => {
                 </Dialog.Trigger>
 
                 <Portal>
-                  <Dialog.Backdrop />
+                  <Dialog.Backdrop className="dialog-backdrop" />
                   <Dialog.Positioner>
                     <Dialog.Content
-                      bg="#1f2126"
+                      className="dialog-glass"
+                      bg="transparent"
                       color="white"
                       border="1px solid"
-                      borderColor="whiteAlpha.200"
+                      borderColor="transparent"
                       borderRadius="2xl"
                     >
                       <Dialog.Header px={6} pt={6} pb={0}>
@@ -747,7 +751,8 @@ const SeminarDetailPage = () => {
                                       syncParticipantSelection(nextName);
                                     }}
                                     placeholder="Ada Lovelace"
-                                    bg="black"
+                                    className="glass-field"
+                                    bg="transparent"
                                     borderColor={
                                       field.state.meta.errors.length > 0
                                         ? "red.400"
@@ -791,7 +796,8 @@ const SeminarDetailPage = () => {
                                             .discord_user_id
                                         : "1234567890"
                                     }
-                                    bg="black"
+                                    className="glass-field"
+                                    bg="transparent"
                                     borderColor={
                                       field.state.meta.errors.length > 0
                                         ? "red.400"
@@ -840,9 +846,9 @@ const SeminarDetailPage = () => {
                         <Button
                           type="submit"
                           form="participant-create-form"
-                          bg="white"
-                          color="black"
-                          _hover={{ bg: "gray.200" }}
+                          bg="var(--accent-soft)"
+                          color="#111111"
+                          _hover={{ bg: "var(--accent-soft-strong)" }}
                           loading={participantMutation.isPending}
                           disabled={participantMutation.isPending}
                         >
@@ -873,9 +879,10 @@ const SeminarDetailPage = () => {
             <Stack gap={3}>
               <Button
                 alignSelf="flex-start"
-                variant="ghost"
+                variant="outline"
+                borderColor="var(--border-strong)"
                 color="white"
-                _hover={{ bg: "whiteAlpha.100" }}
+                _hover={{ bg: "var(--panel-elevated-strong)" }}
                 onClick={() => {
                   void handleCreateSession();
                 }}
@@ -905,9 +912,10 @@ const SeminarDetailPage = () => {
                   {sessions.map(({ data: sessionEntry }) => (
                     <Box
                       key={sessionEntry.id}
+                      className="glass-panel glass-panel-interactive"
                       border="1px solid"
-                      borderColor="whiteAlpha.200"
-                      bg="whiteAlpha.50"
+                      borderColor="transparent"
+                      bg="transparent"
                       borderRadius="md"
                       px={3}
                       py={2}

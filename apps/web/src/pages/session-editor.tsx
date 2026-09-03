@@ -700,7 +700,7 @@ const SessionEditorPage = () => {
 
   return (
     <Layout onLogout={handleLogout} isLoggingOut={isLoggingOut}>
-      <Box color="white" maxW="1240px" mx="auto" pb={28}>
+      <Box className="app-canvas" color="white" maxW="1240px" mx="auto" pb={28}>
         <Stack gap={6}>
           <Flex justify="space-between" align="flex-start" gap={4} wrap="wrap">
             <Stack gap={2}>
@@ -720,7 +720,7 @@ const SessionEditorPage = () => {
                 <Text>/</Text>
                 <Text>Sessions</Text>
               </Flex>
-              <Heading as="h1" size="4xl" fontWeight="700" lineHeight="1.1">
+              <Heading as="h1" size="3xl" fontWeight="700" lineHeight="1.1">
                 Session {String(session.session_number).padStart(2, "0")}
               </Heading>
             </Stack>
@@ -773,10 +773,11 @@ const SessionEditorPage = () => {
           >
             <Stack flex="1" minW="0" gap={5}>
               <Box
+                className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
                 borderColor="var(--border-soft)"
-                bg="var(--panel-elevated)"
+                bg="transparent"
                 px={5}
                 py={5}
               >
@@ -793,8 +794,9 @@ const SessionEditorPage = () => {
                             field.handleChange(event.target.value)
                           }
                           onBlur={field.handleBlur}
-                          bg="black"
-                          borderColor="whiteAlpha.200"
+                          className="glass-field"
+                          bg="transparent"
+                          borderColor="transparent"
                           color="white"
                           _placeholder={{ color: "gray.500" }}
                         />
@@ -815,8 +817,9 @@ const SessionEditorPage = () => {
                             field.handleChange(event.target.value)
                           }
                           onBlur={field.handleBlur}
-                          bg="black"
-                          borderColor="whiteAlpha.200"
+                          className="glass-field"
+                          bg="transparent"
+                          borderColor="transparent"
                           color="white"
                         />
                       )}
@@ -861,10 +864,11 @@ const SessionEditorPage = () => {
               </Box>
 
               <Box
+                className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
                 borderColor="var(--border-soft)"
-                bg="var(--panel-elevated)"
+                bg="transparent"
                 px={5}
                 py={5}
               >
@@ -902,17 +906,19 @@ const SessionEditorPage = () => {
 
                     <Portal>
                       <Dialog.Backdrop
+                        className="dialog-backdrop"
                         bg="rgba(2, 2, 3, 0.72)"
                         backdropFilter="blur(8px)"
                       />
                       <Dialog.Positioner>
                         <Dialog.Content
-                          bg="linear-gradient(180deg, rgba(18, 18, 20, 0.94) 0%, rgba(10, 10, 12, 0.88) 100%)"
+                          className="dialog-glass"
+                          bg="transparent"
                           color="white"
                           border="1px solid"
-                          borderColor="rgba(255, 255, 255, 0.12)"
+                          borderColor="transparent"
                           borderRadius="2xl"
-                          boxShadow="0 24px 48px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.04)"
+                          boxShadow="none"
                           backdropFilter="blur(18px)"
                         >
                           <Dialog.Header px={6} pt={6} pb={0}>
@@ -955,7 +961,8 @@ const SessionEditorPage = () => {
                                           field.handleChange(event.target.value)
                                         }
                                         placeholder="Reading list"
-                                        bg="black"
+                                        className="glass-field"
+                                        bg="transparent"
                                         borderColor={
                                           field.state.meta.errors.length > 0
                                             ? "red.400"
@@ -986,7 +993,8 @@ const SessionEditorPage = () => {
                                           field.handleChange(event.target.value)
                                         }
                                         placeholder="https://example.com/resource"
-                                        bg="black"
+                                        className="glass-field"
+                                        bg="transparent"
                                         borderColor={
                                           field.state.meta.errors.length > 0
                                             ? "red.400"
@@ -1084,9 +1092,9 @@ const SessionEditorPage = () => {
                             <Button
                               type="submit"
                               form="resource-create-form"
-                              bg="white"
-                              color="black"
-                              _hover={{ bg: "gray.200" }}
+                              bg="var(--accent-soft)"
+                              color="#111111"
+                              _hover={{ bg: "var(--accent-soft-strong)" }}
                               loading={saveResourceMutation.isPending}
                               disabled={saveResourceMutation.isPending}
                             >
@@ -1118,8 +1126,9 @@ const SessionEditorPage = () => {
                         justify="space-between"
                         borderRadius="md"
                         border="1px solid"
-                        borderColor="whiteAlpha.200"
-                        bg="whiteAlpha.50"
+                        className="glass-panel"
+                        borderColor="transparent"
+                        bg="transparent"
                         px={3}
                         py={2}
                         gap={3}
@@ -1164,10 +1173,11 @@ const SessionEditorPage = () => {
 
             <Stack w={{ base: "100%", lg: "400px" }} gap={5}>
               <Box
+                className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
                 borderColor="var(--border-soft)"
-                bg="var(--panel-elevated)"
+                bg="transparent"
                 px={5}
                 py={5}
               >
@@ -1196,17 +1206,19 @@ const SessionEditorPage = () => {
 
                     <Portal>
                       <Dialog.Backdrop
+                        className="dialog-backdrop"
                         bg="rgba(2, 2, 3, 0.72)"
                         backdropFilter="blur(8px)"
                       />
                       <Dialog.Positioner>
                         <Dialog.Content
-                          bg="linear-gradient(180deg, rgba(18, 18, 20, 0.94) 0%, rgba(10, 10, 12, 0.88) 100%)"
+                          className="dialog-glass"
+                          bg="transparent"
                           color="white"
                           border="1px solid"
-                          borderColor="rgba(255, 255, 255, 0.12)"
+                          borderColor="transparent"
                           borderRadius="2xl"
-                          boxShadow="0 24px 48px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.04)"
+                          boxShadow="none"
                           backdropFilter="blur(18px)"
                         >
                           <Dialog.Header px={6} pt={6} pb={0}>
@@ -1246,9 +1258,10 @@ const SessionEditorPage = () => {
                                         onChange={(event) =>
                                           field.handleChange(event.target.value)
                                         }
+                                        className="glass-field"
                                         style={{
                                           width: "100%",
-                                          backgroundColor: "black",
+                                          backgroundColor: "transparent",
                                           border: `1px solid ${
                                             field.state.meta.errors.length > 0
                                               ? "#f56565"
@@ -1283,6 +1296,7 @@ const SessionEditorPage = () => {
                                 <assignmentForm.Field name="assign_to_everyone">
                                   {(field) => (
                                     <label
+                                      className="assignment-toggle"
                                       style={{
                                         display: "flex",
                                         alignItems: "center",
@@ -1326,7 +1340,7 @@ const SessionEditorPage = () => {
                                           }
                                           style={{
                                             width: "100%",
-                                            backgroundColor: "black",
+                                            backgroundColor: "transparent",
                                             border: `1px solid ${
                                               field.state.meta.errors.length > 0
                                                 ? "#f56565"
@@ -1394,9 +1408,9 @@ const SessionEditorPage = () => {
                             <Button
                               type="submit"
                               form="assignment-create-form"
-                              bg="white"
-                              color="black"
-                              _hover={{ bg: "gray.200" }}
+                              bg="var(--accent-soft)"
+                              color="#111111"
+                              _hover={{ bg: "var(--accent-soft-strong)" }}
                               loading={createAssignmentMutation.isPending}
                               disabled={createAssignmentMutation.isPending}
                             >
@@ -1427,8 +1441,9 @@ const SessionEditorPage = () => {
                           key={assignment.id}
                           borderRadius="md"
                           border="1px solid"
-                          borderColor="whiteAlpha.200"
-                          bg="whiteAlpha.50"
+                          className="glass-panel"
+                          borderColor="transparent"
+                          bg="transparent"
                           px={3}
                           py={2}
                         >
@@ -1449,10 +1464,11 @@ const SessionEditorPage = () => {
               </Box>
 
               <Box
+                className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
                 borderColor="var(--border-soft)"
-                bg="var(--panel-elevated)"
+                bg="transparent"
                 px={5}
                 py={5}
               >
@@ -1502,10 +1518,11 @@ const SessionEditorPage = () => {
               </Box>
 
               <Box
+                className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
                 borderColor="var(--border-soft)"
-                bg="var(--panel-elevated)"
+                bg="transparent"
                 px={5}
                 py={5}
               >
@@ -1533,8 +1550,9 @@ const SessionEditorPage = () => {
                         gap={3}
                         borderRadius="md"
                         border="1px solid"
-                        borderColor="whiteAlpha.200"
-                        bg="whiteAlpha.50"
+                        className="glass-panel"
+                        borderColor="transparent"
+                        bg="transparent"
                         px={3}
                         py={2}
                       >

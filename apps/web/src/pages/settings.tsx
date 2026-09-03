@@ -5,9 +5,10 @@ import {
   clearStoredToken,
   readApiErrorMessage,
 } from "@/utils";
-import { Alert, Box, Flex, Heading, Stack, Text } from "@chakra-ui/react";
+import { Alert, Box, Flex, Heading, Icon, Stack, Text } from "@chakra-ui/react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { LuShieldCheck } from "react-icons/lu";
 import type { LogoutResponse } from "schemas";
 
 const SettingsPage = () => {
@@ -67,16 +68,24 @@ const SettingsPage = () => {
         </Flex>
 
         <Box
-          bg="whiteAlpha.50"
+          className="glass-panel"
+          bg="transparent"
           border="1px solid"
           borderColor="whiteAlpha.200"
           borderRadius="2xl"
           p={6}
         >
-          <Text color="gray.300">
-            App settings are not implemented yet, but this screen is now wired
-            into the sidebar navigation.
-          </Text>
+          <Stack gap={3}>
+            <Flex align="center" gap={3} color="var(--accent-soft)">
+              <Icon as={LuShieldCheck} boxSize={5} />
+              <Text fontWeight="700">Admin workspace</Text>
+            </Flex>
+            <Text color="gray.300">
+              This workspace is protected by an administrator password. More
+              account and integration controls will appear here as they become
+              available.
+            </Text>
+          </Stack>
         </Box>
       </Stack>
 

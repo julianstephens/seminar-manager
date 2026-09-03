@@ -238,13 +238,14 @@ const HomePage = () => {
           seminarsQuery.data.map(({ data: seminar }) => (
             <Box
               key={seminar.id}
+              className="glass-panel glass-panel-interactive"
               borderRadius="xl"
               border="1px solid"
               borderColor="var(--border-soft)"
-              bg="var(--panel-elevated)"
+              bg="transparent"
               px={5}
               py={4}
-              boxShadow="0 0 0 1px rgba(255,255,255,0.02)"
+              boxShadow="none"
             >
               <Flex align="center" justify="space-between" gap={6} wrap="wrap">
                 <Box flex="1" minW="260px">
@@ -296,10 +297,9 @@ const HomePage = () => {
                   <Flex align="center" gap={2}>
                     <Button
                       size="sm"
-                      variant="outline"
-                      borderColor="red.400"
+                      variant="ghost"
                       color="red.300"
-                      _hover={{ bg: "red.950" }}
+                      _hover={{ bg: "rgba(229, 62, 62, 0.12)" }}
                       loading={deleteSeminarMutation.isPending}
                       disabled={deleteSeminarMutation.isPending}
                       onClick={() => {
@@ -328,10 +328,11 @@ const HomePage = () => {
           ))
         ) : (
           <Box
+            className="glass-panel"
             borderRadius="xl"
             border="1px dashed"
             borderColor="var(--border-soft)"
-            bg="var(--panel-elevated)"
+            bg="transparent"
             px={5}
             py={8}
             boxShadow="inset 0 1px 0 rgba(255,255,255,0.02)"
@@ -340,6 +341,10 @@ const HomePage = () => {
               <Heading as="h2" size="lg" color="white">
                 No seminars yet
               </Heading>
+              <Text color="gray.400" textAlign="center">
+                Create your first seminar to begin organizing sessions and
+                participants.
+              </Text>
             </Stack>
           </Box>
         )}
@@ -366,17 +371,19 @@ const HomePage = () => {
 
           <Portal>
             <Dialog.Backdrop
+              className="dialog-backdrop"
               bg="rgba(2, 2, 3, 0.72)"
               backdropFilter="blur(8px)"
             />
             <Dialog.Positioner>
               <Dialog.Content
-                bg="linear-gradient(180deg, rgba(18, 18, 20, 0.94) 0%, rgba(10, 10, 12, 0.88) 100%)"
+                className="dialog-glass"
+                bg="transparent"
                 color="white"
                 border="1px solid"
-                borderColor="rgba(255, 255, 255, 0.12)"
+                borderColor="transparent"
                 borderRadius="2xl"
-                boxShadow="0 24px 48px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.04)"
+                boxShadow="none"
                 backdropFilter="blur(18px)"
               >
                 <Dialog.Header px={6} pt={6} pb={0}>
@@ -415,7 +422,8 @@ const HomePage = () => {
                                 field.handleChange(event.target.value)
                               }
                               placeholder="Death"
-                              bg="black"
+                              className="glass-field"
+                              bg="transparent"
                               borderColor={
                                 field.state.meta.errors.length > 0
                                   ? "red.400"
@@ -442,7 +450,8 @@ const HomePage = () => {
                                 field.handleChange(event.target.value)
                               }
                               placeholder="Optional seminar summary"
-                              bg="black"
+                              className="glass-field"
+                              bg="transparent"
                               borderColor="whiteAlpha.200"
                             />
                           </Field.Root>
@@ -462,7 +471,8 @@ const HomePage = () => {
                                 field.handleChange(event.target.value)
                               }
                               placeholder="channel-id"
-                              bg="black"
+                              className="glass-field"
+                              bg="transparent"
                               borderColor={
                                 field.state.meta.errors.length > 0
                                   ? "red.400"
@@ -489,7 +499,8 @@ const HomePage = () => {
                                 field.handleChange(event.target.value)
                               }
                               placeholder="Optional folder id"
-                              bg="black"
+                              className="glass-field"
+                              bg="transparent"
                               borderColor="whiteAlpha.200"
                             />
                           </Field.Root>
@@ -529,9 +540,9 @@ const HomePage = () => {
                   <Button
                     type="submit"
                     form="seminar-create-form"
-                    bg="white"
-                    color="black"
-                    _hover={{ bg: "gray.200" }}
+                    bg="var(--accent-soft)"
+                    color="#111111"
+                    _hover={{ bg: "var(--accent-soft-strong)" }}
                     loading={createMutation.isPending}
                     disabled={createMutation.isPending}
                   >
