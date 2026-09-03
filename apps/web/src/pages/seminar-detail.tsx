@@ -211,6 +211,9 @@ const SeminarDetailPage = () => {
       void queryClient.invalidateQueries({
         queryKey: participantQueryKeys.list(seminarId ?? ""),
       });
+      void queryClient.invalidateQueries({
+        queryKey: participantQueryKeys.directory(),
+      });
       participantForm.reset();
       setParticipantSubmitError(null);
       setIsAddParticipantOpen(false);
@@ -239,7 +242,6 @@ const SeminarDetailPage = () => {
       session_number: number;
       title: string;
       date: string;
-      status: "scheduled" | "completed" | "canceled";
       drive_folder_id?: string | null;
       published_at?: string | null;
       archived_at?: string | null;
@@ -269,7 +271,6 @@ const SeminarDetailPage = () => {
       session_number: nextSessionNumber,
       title: `Session ${String(nextSessionNumber).padStart(2, "0")}`,
       date: new Date().toISOString(),
-      status: "scheduled" as const,
       drive_folder_id: null,
       published_at: null,
       archived_at: null,
@@ -887,7 +888,14 @@ const SeminarDetailPage = () => {
                   void handleCreateSession();
                 }}
                 loading={createSessionMutation.isPending}
-                disabled={createSessionMutation.isPending}
+                disabled={
+                  createSessionMutation.isPending || participants.length === 0
+                }
+                title={
+                  participants.length === 0
+                    ? "Add at least one participant before creating a session"
+                    : undefined
+                }
               >
                 <Icon as={LuPlus} boxSize={4} />
                 {createSessionMutation.isPending
@@ -942,49 +950,25 @@ const SeminarDetailPage = () => {
                             borderRadius="md"
                             textTransform="capitalize"
                             bg={
-                              sessionEntry.status === "completed"
-                                ? "green.950"
-                                : sessionEntry.status === "canceled"
-                                  ? "red.950"
-                                  : "gray.900"
+                              sessionEntry.status === "archived"
+                                ? "orange.950"
+                                : sessionEntry.status === "published"
+                                  ? "blue.950"
+                                  : sessionEntry.status === "ready"
+                                    ? "green.950"
+                                    : "gray.900"
                             }
                             color={
-                              sessionEntry.status === "completed"
-                                ? "green.300"
-                                : sessionEntry.status === "canceled"
-                                  ? "red.300"
-                                  : "gray.300"
+                              sessionEntry.status === "archived"
+                                ? "orange.300"
+                                : sessionEntry.status === "published"
+                                  ? "blue.300"
+                                  : sessionEntry.status === "ready"
+                                    ? "green.300"
+                                    : "gray.300"
                             }
                           >
                             {sessionEntry.status}
-                          </Text>
-                          <Text
-                            px={2}
-                            py={1}
-                            fontSize="xs"
-                            fontWeight="600"
-                            borderRadius="md"
-                            textTransform="capitalize"
-                            bg={
-                              sessionEntry.archived_at
-                                ? "orange.950"
-                                : sessionEntry.published_at
-                                  ? "blue.950"
-                                  : "gray.900"
-                            }
-                            color={
-                              sessionEntry.archived_at
-                                ? "orange.300"
-                                : sessionEntry.published_at
-                                  ? "blue.300"
-                                  : "gray.300"
-                            }
-                          >
-                            {sessionEntry.archived_at
-                              ? "archived"
-                              : sessionEntry.published_at
-                                ? "published"
-                                : "draft"}
                           </Text>
                           <IconButton
                             aria-label={`Open session ${sessionEntry.session_number}`}

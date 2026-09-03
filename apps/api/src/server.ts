@@ -1,4 +1,5 @@
 import db from "@/db";
+import { env } from "@/env";
 import { ApiError } from "@/handlers";
 import {
   createAssignmentHandler,
@@ -20,6 +21,7 @@ import {
   createParticipantHandler,
   createSeminarHandler,
   createSessionHandler,
+  deleteParticipantHandler,
   deleteSeminarHandler,
   deleteSessionHandler,
   getAllParticipantsHandler,
@@ -31,23 +33,27 @@ import {
   sessionPayload,
   updateParticipantHandler,
   updateSeminarHandler,
-  updateSessionHandler,
 } from "@/handlers/seminar";
 import {
   createParticipant,
-  createPublicationRecord,
   getAssignmentById,
   getParticipantByDiscordUserId,
   getParticipantById,
   getParticipantByName,
   getPublicationRecordById,
-  getPublicationRecordsBySession,
   getResourceById,
-  getSeminarParticipants,
   getSessionById,
   updateSession,
 } from "@/repos";
 import { getAuthSession } from "@/repos/auth";
+import {
+  archiveSession,
+  getReadiness,
+  getSessionLifecycle,
+  publishSession,
+  retryPublication,
+} from "@/services/publication-service";
+import fastifySchedule from "@fastify/schedule";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
 import {
@@ -61,6 +67,7 @@ import {
 } from "@fastify/type-provider-zod";
 import type { FastifyInstance } from "fastify";
 import Fastify from "fastify";
+import { Worker } from "node:worker_threads";
 import {
   ApiErrorResponseSchema,
   AssignmentResponseSchema,
@@ -82,8 +89,51 @@ import {
   SessionResponseSchema,
   SessionUpdateSchema,
 } from "schemas";
+import { AsyncTask, CronJob } from "toad-scheduler";
 import { z } from "zod";
+import { buildDbCleanerWorkerData } from "./db-cleaner";
 import { toRequestErrorResponse } from "./error-response";
+
+const registerWeeklyDbCleaner = (app: FastifyInstance) => {
+  const dbCleanerTask = new AsyncTask(
+    "weekly-db-cleaner",
+    async () => {
+      const worker = new Worker(new URL("./db-cleaner.ts", import.meta.url), {
+        workerData: buildDbCleanerWorkerData(env.DATABASE_URL),
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        worker.once("error", reject);
+        worker.once("message", (message) => {
+          if (message && typeof message === "object" && "status" in message) {
+            resolve();
+          }
+        });
+        worker.once("exit", (code) => {
+          if (code !== 0) {
+            reject(new Error(`db-cleaner exited with code ${code}`));
+          }
+        });
+      });
+    },
+    (err) => {
+      app.log.error(err, "weekly db cleaner task failed");
+    },
+  );
+
+  const weeklyDbCleanerJob = new CronJob(
+    {
+      cronExpression: "0 2 * * 0",
+      timezone: "UTC",
+    },
+    dbCleanerTask,
+    {
+      preventOverrun: true,
+    },
+  );
+
+  app.scheduler.addCronJob(weeklyDbCleanerJob);
+};
 
 export const setupApp = async (): Promise<FastifyInstance> => {
   const app = Fastify({
@@ -92,6 +142,8 @@ export const setupApp = async (): Promise<FastifyInstance> => {
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  await app.register(fastifySchedule);
 
   await app.register(fastifySwagger, {
     openapi: {
@@ -144,7 +196,12 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       return reply
         .code(apiError.statusCode)
         .send(
-          toRequestErrorResponse(apiError.statusCode, apiError.message, req),
+          toRequestErrorResponse(
+            apiError.statusCode,
+            apiError.message,
+            req,
+            apiError.details,
+          ),
         );
     }
 
@@ -171,6 +228,8 @@ export const setupApp = async (): Promise<FastifyInstance> => {
     );
   });
 
+  registerWeeklyDbCleaner(app);
+
   const typedApp = app.withTypeProvider<ZodTypeProvider>();
 
   typedApp.route({
@@ -188,6 +247,29 @@ export const setupApp = async (): Promise<FastifyInstance> => {
     },
     handler: async (request, _reply) => {
       return await loginHandler(request.body);
+    },
+  });
+
+  typedApp.route({
+    method: "DELETE",
+    url: "/api/seminars/:seminar_id/participants/:participant_id",
+    schema: {
+      tags: ["participants"],
+      params: z.object({
+        seminar_id: z.uuid(),
+        participant_id: z.coerce.number().int().positive(),
+      }),
+      response: {
+        200: z.object({ message: z.string(), data: z.null() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request) => {
+      return await deleteParticipantHandler(
+        request.params.seminar_id,
+        request.params.participant_id,
+      );
     },
   });
 
@@ -211,6 +293,25 @@ export const setupApp = async (): Promise<FastifyInstance> => {
 
       await logoutHandler(accessToken);
       return { success: true, message: "Session revoked successfully." };
+    },
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/sessions/:id/readiness",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: z.object({ ready: z.boolean(), issues: z.string().array() }),
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request) => {
+      const session = await getSessionById(db, request.params.id);
+      if (!session) throw new ApiError(404, "Session not found");
+      return await getReadiness(db, session);
     },
   });
 
@@ -323,7 +424,7 @@ export const setupApp = async (): Promise<FastifyInstance> => {
         throw new ApiError(404, "Session not found");
       }
 
-      return sessionPayload(session);
+      return sessionPayload(session, await getSessionLifecycle(db, session));
     },
   });
 
@@ -342,6 +443,13 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       },
     },
     handler: async (request, _reply) => {
+      if (request.body.published_at) {
+        throw new ApiError(
+          400,
+          "Use the publish endpoint to publish a session",
+        );
+      }
+
       const session = await updateSession(db, request.params.id, {
         ...request.body,
         date: request.body.date ? new Date(request.body.date) : undefined,
@@ -363,7 +471,7 @@ export const setupApp = async (): Promise<FastifyInstance> => {
         throw new ApiError(404, "Session not found");
       }
 
-      return sessionPayload(session);
+      return sessionPayload(session, await getSessionLifecycle(db, session));
     },
   });
 
@@ -623,6 +731,23 @@ export const setupApp = async (): Promise<FastifyInstance> => {
     },
   });
 
+  const PublicationResultSchema = z.object({
+    session_id: z.uuid(),
+    status: z.enum(["published", "archived"]),
+    readiness: z.object({ ready: z.boolean(), issues: z.string().array() }),
+    results: z.object({
+      drive: z.enum(["success", "failed"]),
+      channel_message: z.enum(["success", "failed"]).optional(),
+      archive_message: z.enum(["success", "failed"]).optional(),
+      participant_dms: z.array(
+        z.object({
+          participant_id: z.number().int().positive(),
+          status: z.enum(["success", "failed"]),
+        }),
+      ),
+    }),
+  });
+
   // POST /api/sessions/:id/publish
   typedApp.route({
     method: "POST",
@@ -631,49 +756,15 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       tags: ["sessions"],
       params: z.object({ id: z.uuid() }),
       response: {
-        200: SessionResponseSchema,
+        200: PublicationResultSchema,
+        400: ApiErrorResponseSchema,
         401: ApiErrorResponseSchema,
         404: ApiErrorResponseSchema,
         500: ApiErrorResponseSchema,
       },
     },
     handler: async (request, _reply) => {
-      const session = await getSessionById(db, request.params.id);
-      if (!session) throw new ApiError(404, "Session not found");
-
-      const existingRecords = await getPublicationRecordsBySession(
-        db,
-        session.id,
-      );
-      if (session.published_at && existingRecords.length > 0) {
-        return sessionPayload(session);
-      }
-
-      const updatedSession = await updateSessionHandler(
-        session.seminar_id,
-        session.id,
-        {
-          published_at: new Date().toISOString(),
-        },
-      );
-
-      const seminarParticipants = await getSeminarParticipants(
-        db,
-        session.seminar_id,
-      );
-      const participantId =
-        seminarParticipants[0]?.participant_id ?? session.session_number;
-
-      await createPublicationRecord(db, {
-        session_id: session.id,
-        action: existingRecords.length === 0 ? "created" : "updated",
-        participant_id: participantId,
-        external_id: session.id,
-        status: "success",
-        error: null,
-      });
-
-      return updatedSession;
+      return await publishSession(db, request.params.id);
     },
   });
 
@@ -685,18 +776,34 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       tags: ["sessions"],
       params: z.object({ id: z.uuid() }),
       response: {
-        200: SessionResponseSchema,
+        200: PublicationResultSchema,
         401: ApiErrorResponseSchema,
         404: ApiErrorResponseSchema,
         500: ApiErrorResponseSchema,
       },
     },
     handler: async (request, _reply) => {
-      const session = await getSessionById(db, request.params.id);
-      if (!session) throw new ApiError(404, "Session not found");
-      return await updateSessionHandler(session.seminar_id, request.params.id, {
-        archived_at: new Date().toISOString(),
-      });
+      return await archiveSession(db, request.params.id);
+    },
+  });
+
+  typedApp.route({
+    method: "POST",
+    url: "/api/publications/:id/retry",
+    schema: {
+      tags: ["publication-records"],
+      params: z.object({ id: z.coerce.number().int().positive() }),
+      response: {
+        200: PublicationRecordResponseSchema,
+        400: ApiErrorResponseSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request) => {
+      const record = await retryPublication(db, request.params.id);
+      if (!record) throw new ApiError(500, "Unable to retry publication");
+      return await getPublicationRecordHandler(record.id, record.session_id);
     },
   });
 

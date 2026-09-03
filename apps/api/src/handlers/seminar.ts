@@ -40,6 +40,7 @@ import type {
 
 import { serializeApiDates } from "./format";
 import { ApiError } from "./index";
+import { getSessionLifecycle } from "@/services/publication-service";
 
 export const seminarPayload = <T extends Record<string, unknown>>(
   seminar: T,
@@ -58,18 +59,22 @@ export const seminarListPayload = <T extends Record<string, unknown>>(
 
 export const sessionPayload = <T extends Record<string, unknown>>(
   session: T,
+  status: "draft" | "ready" | "published" | "archived" = session.archived_at
+    ? "archived"
+    : session.published_at
+      ? "published"
+      : "draft",
 ): SessionResponse => ({
   message: "Session loaded successfully.",
-  data: serializeApiDates(session) as unknown as Session,
+  data: serializeApiDates({
+    ...session,
+    status,
+  }) as unknown as Session,
 });
 
 export const sessionListPayload = <T extends Record<string, unknown>>(
   sessions: T[],
-): SessionResponse[] =>
-  sessions.map((session) => ({
-    message: "Session loaded successfully.",
-    data: serializeApiDates(session) as unknown as Session,
-  }));
+): SessionResponse[] => sessions.map((session) => sessionPayload(session));
 
 export const getSeminarsHandler = async (): Promise<SeminarResponse[]> => {
   const seminars = await getSeminars(db);
@@ -156,7 +161,11 @@ export const getSessionsHandler = async (
   }
 
   const sessions = await getSessionsBySeminar(db, seminarId);
-  return sessionListPayload(sessions);
+  return await Promise.all(
+    sessions.map(async (session) =>
+      sessionPayload(session, await getSessionLifecycle(db, session)),
+    ),
+  );
 };
 
 export const getSessionHandler = async (
@@ -175,7 +184,7 @@ export const getSessionHandler = async (
     throw new ApiError(404, "Session not found");
   }
 
-  return sessionPayload(session);
+  return sessionPayload(session, await getSessionLifecycle(db, session));
 };
 
 export const createSessionHandler = async (
@@ -186,6 +195,21 @@ export const createSessionHandler = async (
 
   if (!seminar) {
     throw new ApiError(404, "Seminar not found");
+  }
+
+  const participants = await getSeminarParticipants(db, seminarId);
+  if (participants.length === 0) {
+    throw new ApiError(
+      400,
+      "At least one seminar participant is required before creating a session",
+    );
+  }
+
+  if (body.published_at) {
+    throw new ApiError(
+      400,
+      "Create the session as a draft, then publish it after adding an assignment",
+    );
   }
 
   const existingSession = await getSessionBySeminarAndNumber(
@@ -204,14 +228,13 @@ export const createSessionHandler = async (
     date: new Date(body.date),
     published_at: body.published_at ? new Date(body.published_at) : null,
     archived_at: body.archived_at ? new Date(body.archived_at) : null,
-    status: body.status ?? "scheduled",
   });
 
   if (!session) {
     throw new ApiError(500, "Unable to create session");
   }
 
-  return sessionPayload(session);
+  return sessionPayload(session, await getSessionLifecycle(db, session));
 };
 
 export const updateSessionHandler = async (
@@ -267,7 +290,7 @@ export const updateSessionHandler = async (
     throw new ApiError(500, "Unable to update session");
   }
 
-  return sessionPayload(session);
+  return sessionPayload(session, await getSessionLifecycle(db, session));
 };
 
 export const deleteSessionHandler = async (

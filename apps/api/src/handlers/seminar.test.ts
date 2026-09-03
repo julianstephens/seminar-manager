@@ -80,7 +80,7 @@ describe("session response helpers", () => {
         session_number: 1,
         title: "Intro",
         date: "2024-02-01T00:00:00.000Z",
-        status: "scheduled",
+        status: "draft",
         drive_folder_id: null,
         published_at: null,
         archived_at: null,

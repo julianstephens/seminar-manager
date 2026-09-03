@@ -32,7 +32,6 @@ export interface SessionTable {
   session_number: number;
   title: string;
   date: Date;
-  status: "scheduled" | "completed" | "canceled";
   drive_folder_id: string | null;
   published_at: Date | null;
   archived_at: Date | null;
@@ -59,7 +58,7 @@ export interface ResourceTable {
   session_id: string;
   name: string;
   url: string;
-  visibility: "public" | "private";
+  visibility: "shared" | "individual";
   created_at: Generated<Date>;
   updated_at: Date;
 }
@@ -75,10 +74,11 @@ export interface AssignmentTable {
 export interface PublicationRecordTable {
   id: Generated<number>;
   session_id: string;
-  action: "created" | "updated" | "deleted";
-  participant_id: number;
-  external_id: string;
-  status: "pending" | "success" | "failed";
+  action:
+    "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+  participant_id: number | null;
+  external_id: string | null;
+  status: "success" | "failed";
   error: string | null;
   created_at: Generated<Date>;
 }

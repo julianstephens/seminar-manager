@@ -1,16 +1,20 @@
 import {
+  archiveSession,
   assignmentQueryKeys,
   createAssignment,
   createResource,
+  deleteResource,
   fetchAssignments,
   fetchPublicationRecords,
   fetchResources,
   fetchSeminarById,
   fetchSeminarParticipants,
   fetchSessionById,
+  fetchSessionReadiness,
   participantQueryKeys,
   publicationRecordQueryKeys,
   publishSession,
+  retryPublication,
   resourceQueryKeys,
   saveSessionDraft,
   seminarQueryKeys,
@@ -89,14 +93,10 @@ const SessionEditorPage = () => {
   const [assignmentSubmitError, setAssignmentSubmitError] = useState<
     string | null
   >(null);
-  const [placeholderMessage, setPlaceholderMessage] = useState<string | null>(
-    null,
-  );
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const persistedValuesRef = useRef<{
     title: string;
     date: string;
-    status: "scheduled" | "completed" | "canceled";
   } | null>(null);
 
   const seminarQuery = useQuery({
@@ -134,6 +134,11 @@ const SessionEditorPage = () => {
     queryFn: () => fetchPublicationRecords(sessionId ?? ""),
     enabled: !!sessionId,
   });
+  const readinessQuery = useQuery({
+    queryKey: ["session-readiness", sessionId],
+    queryFn: () => fetchSessionReadiness(sessionId ?? ""),
+    enabled: !!sessionId,
+  });
 
   const seminar = seminarQuery.data?.data ?? null;
   const session = sessionQuery.data?.data ?? null;
@@ -142,11 +147,21 @@ const SessionEditorPage = () => {
   const assignments = assignmentsQuery.data ?? [];
   const publicationRecords = publicationRecordsQuery.data ?? [];
 
+  const retryPublicationMutation = useMutation({
+    mutationFn: retryPublication,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: publicationRecordQueryKeys.list(sessionId ?? ""),
+      });
+      setSubmitError(null);
+    },
+    onError: (error: Error) => setSubmitError(error.message),
+  });
+
   const form = useForm({
     defaultValues: {
       title: "",
       date: "",
-      status: "scheduled" as "scheduled" | "completed" | "canceled",
       published: false,
     },
     onSubmit: async ({ value }) => {
@@ -163,7 +178,6 @@ const SessionEditorPage = () => {
       const normalizedPayload = {
         title: value.title.trim(),
         date: nextDate,
-        status: value.status,
         published_at: value.published ? new Date().toISOString() : null,
       };
 
@@ -182,7 +196,7 @@ const SessionEditorPage = () => {
   // string key is a stable primitive so useDebounce deps comparison works correctly
   const autoSaveKey = useSelector(
     form.store,
-    (s) => `${s.values.title}|${s.values.date}|${s.values.status}`,
+    (s) => `${s.values.title}|${s.values.date}`,
   );
   const debouncedAutoSaveKey = useDebounce(autoSaveKey, 1500);
 
@@ -200,20 +214,18 @@ const SessionEditorPage = () => {
     await queryClient.invalidateQueries({
       queryKey: seminarQueryKeys.detail(seminarId),
     });
+    await queryClient.invalidateQueries({
+      queryKey: ["session-readiness", sessionId],
+    });
   };
 
   const saveMutation = useMutation({
     mutationFn: (payload: {
       title?: string;
       date?: string;
-      status?: "scheduled" | "completed" | "canceled";
       published_at?: string | null;
     }) => updateSession(seminarId ?? "", sessionId ?? "", payload),
-    onSuccess: async (response) => {
-      void queryClient.setQueryData(
-        sessionQueryKeys.detail(seminarId ?? "", sessionId ?? ""),
-        response,
-      );
+    onSuccess: async () => {
       await invalidateEditorQueries();
       setSubmitError(null);
     },
@@ -223,20 +235,12 @@ const SessionEditorPage = () => {
   });
 
   const draftMutation = useMutation({
-    mutationFn: (payload: {
-      title: string;
-      date: string;
-      status: "scheduled" | "completed" | "canceled";
-    }) =>
+    mutationFn: (payload: { title: string; date: string }) =>
       saveSessionDraft(seminarId ?? "", sessionId ?? "", {
         ...payload,
         published_at: null,
       }),
     onSuccess: async (response) => {
-      void queryClient.setQueryData(
-        sessionQueryKeys.detail(seminarId ?? "", sessionId ?? ""),
-        response,
-      );
       await invalidateEditorQueries();
       form.setFieldValue("published", false);
       setSubmitError(null);
@@ -244,7 +248,6 @@ const SessionEditorPage = () => {
       persistedValuesRef.current = {
         title: response.data.title.trim(),
         date: toDateTimeInputValue(response.data.date),
-        status: response.data.status,
       };
     },
     onError: (error: Error) => {
@@ -256,7 +259,7 @@ const SessionEditorPage = () => {
     defaultValues: {
       name: "",
       url: "",
-      visibility: "private" as "public" | "private",
+      visibility: "individual" as "shared" | "individual",
     },
     onSubmit: async ({ value }) => {
       if (!sessionId) {
@@ -289,7 +292,7 @@ const SessionEditorPage = () => {
       session_id: string;
       name: string;
       url: string;
-      visibility: "public" | "private";
+      visibility: "shared" | "individual";
     }) => {
       if (editingResourceId) {
         return updateResource(sessionId ?? "", editingResourceId, payload);
@@ -318,6 +321,9 @@ const SessionEditorPage = () => {
       );
       await queryClient.invalidateQueries({
         queryKey: resourceQueryKeys.list(sessionId),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["session-readiness", sessionId],
       });
       resourceForm.reset();
       setEditingResourceId(null);
@@ -352,12 +358,12 @@ const SessionEditorPage = () => {
           ({ data: resource }) => resource.id === value.resource_id,
         )?.data;
 
-        if (selectedResource && selectedResource.visibility !== "public") {
+        if (selectedResource && selectedResource.visibility !== "shared") {
           const updatedResource = await updateResource(
             sessionId,
             value.resource_id,
             {
-              visibility: "public",
+              visibility: "shared",
             },
           );
 
@@ -365,7 +371,9 @@ const SessionEditorPage = () => {
             resourceQueryKeys.list(sessionId),
             (
               current:
-                | { data: { id: string; visibility: "public" | "private" } }[]
+                | {
+                    data: { id: string; visibility: "shared" | "individual" };
+                  }[]
                 | undefined,
             ) =>
               (current ?? []).map((resource) =>
@@ -480,6 +488,9 @@ const SessionEditorPage = () => {
       await queryClient.invalidateQueries({
         queryKey: assignmentQueryKeys.list(sessionId),
       });
+      await queryClient.invalidateQueries({
+        queryKey: ["session-readiness", sessionId],
+      });
       assignmentForm.reset();
       setAssignmentSubmitError(null);
       setIsAddAssignmentOpen(false);
@@ -490,11 +501,7 @@ const SessionEditorPage = () => {
   });
 
   const publishMutation = useMutation({
-    mutationFn: (payload: {
-      title: string;
-      date: string;
-      status: "scheduled" | "completed" | "canceled";
-    }) =>
+    mutationFn: (payload: { title: string; date: string }) =>
       publishSession(seminarId ?? "", sessionId ?? "", {
         ...payload,
         published_at: new Date().toISOString(),
@@ -525,12 +532,10 @@ const SessionEditorPage = () => {
     }
     form.setFieldValue("title", session.title);
     form.setFieldValue("date", toDateTimeInputValue(session.date));
-    form.setFieldValue("status", session.status);
     form.setFieldValue("published", Boolean(session.published_at));
     persistedValuesRef.current = {
       title: session.title.trim(),
       date: toDateTimeInputValue(session.date),
-      status: session.status,
     };
   }, [form, session]);
 
@@ -560,11 +565,7 @@ const SessionEditorPage = () => {
     }
 
     const values = form.state.values;
-    if (
-      values.title.trim() === pv.title &&
-      values.date === pv.date &&
-      values.status === pv.status
-    ) {
+    if (values.title.trim() === pv.title && values.date === pv.date) {
       return;
     }
 
@@ -576,7 +577,6 @@ const SessionEditorPage = () => {
     void draftMutation.mutateAsync({
       title: values.title.trim(),
       date: nextDate,
-      status: values.status,
     });
   }, [debouncedAutoSaveKey, seminarId, sessionId]);
 
@@ -599,7 +599,7 @@ const SessionEditorPage = () => {
     id: string;
     name: string;
     url: string;
-    visibility: "public" | "private";
+    visibility: "shared" | "individual";
   }) => {
     setEditingResourceId(resource.id);
     setResourceSubmitError(null);
@@ -607,10 +607,6 @@ const SessionEditorPage = () => {
     resourceForm.setFieldValue("url", resource.url);
     resourceForm.setFieldValue("visibility", resource.visibility);
     setIsAddResourceOpen(true);
-  };
-
-  const handlePlaceholderClick = (label: string) => {
-    setPlaceholderMessage(`${label} will be wired in a later iteration.`);
   };
 
   const handleLogout = async () => {
@@ -753,20 +749,6 @@ const SessionEditorPage = () => {
             </Alert.Root>
           ) : null}
 
-          {placeholderMessage ? (
-            <Alert.Root
-              status="info"
-              bg="whiteAlpha.50"
-              borderColor="whiteAlpha.200"
-              color="white"
-            >
-              <Alert.Indicator />
-              <Alert.Content>
-                <Alert.Description>{placeholderMessage}</Alert.Description>
-              </Alert.Content>
-            </Alert.Root>
-          ) : null}
-
           <Flex
             align="flex-start"
             gap={6}
@@ -831,35 +813,16 @@ const SessionEditorPage = () => {
                     <Text color="gray.400" fontSize="sm" mb={2}>
                       Status
                     </Text>
-                    <Flex gap={2} wrap="wrap">
-                      {(["scheduled", "completed", "canceled"] as const).map(
-                        (status) => (
-                          <Button
-                            key={status}
-                            variant={
-                              form.state.values.status === status
-                                ? "solid"
-                                : "outline"
-                            }
-                            bg={
-                              form.state.values.status === status
-                                ? "var(--accent-soft)"
-                                : "transparent"
-                            }
-                            color={
-                              form.state.values.status === status
-                                ? "#111111"
-                                : "white"
-                            }
-                            borderColor="whiteAlpha.300"
-                            _hover={{ bg: "whiteAlpha.100" }}
-                            onClick={() => form.setFieldValue("status", status)}
-                          >
-                            {status}
-                          </Button>
-                        ),
-                      )}
-                    </Flex>
+                    <Text
+                      color="white"
+                      fontWeight="600"
+                      textTransform="capitalize"
+                    >
+                      {session.status}
+                    </Text>
+                    <Text color="gray.500" fontSize="xs" mt={1}>
+                      Status is derived from readiness and publication activity.
+                    </Text>
                   </Box>
                 </Stack>
               </Box>
@@ -1025,7 +988,7 @@ const SessionEditorPage = () => {
                                         onChange={(event) =>
                                           field.handleChange(
                                             event.target.value as
-                                              "public" | "private",
+                                              "shared" | "individual",
                                           )
                                         }
                                         style={{
@@ -1041,8 +1004,10 @@ const SessionEditorPage = () => {
                                           padding: "0.625rem 0.75rem",
                                         }}
                                       >
-                                        <option value="private">Private</option>
-                                        <option value="public">Public</option>
+                                        <option value="individual">
+                                          Individual
+                                        </option>
+                                        <option value="shared">Shared</option>
                                       </select>
                                       {field.state.meta.errors.length > 0 ? (
                                         <Field.ErrorText>
@@ -1198,7 +1163,16 @@ const SessionEditorPage = () => {
                             variant="ghost"
                             color="red.300"
                             onClick={() =>
-                              handlePlaceholderClick("Remove Resource")
+                              void deleteResource(resource.id).then(() =>
+                                Promise.all([
+                                  queryClient.invalidateQueries({
+                                    queryKey: resourceQueryKeys.list(sessionId),
+                                  }),
+                                  queryClient.invalidateQueries({
+                                    queryKey: ["session-readiness", sessionId],
+                                  }),
+                                ]),
+                              )
                             }
                           >
                             Remove
@@ -1538,6 +1512,21 @@ const SessionEditorPage = () => {
                 </form.Field> */}
 
                 <Stack gap={1} mt={3}>
+                  <Text
+                    color={
+                      readinessQuery.data?.ready ? "green.300" : "orange.300"
+                    }
+                    fontSize="sm"
+                  >
+                    {readinessQuery.data?.ready
+                      ? "Ready to publish"
+                      : "Not ready to publish"}
+                  </Text>
+                  {readinessQuery.data?.issues.map((issue) => (
+                    <Text key={issue} color="orange.200" fontSize="xs">
+                      {issue}
+                    </Text>
+                  ))}
                   <Text color="gray.400" fontSize="sm">
                     Scheduled for:{" "}
                     {new Intl.DateTimeFormat("en-US", {
@@ -1596,12 +1585,38 @@ const SessionEditorPage = () => {
                         px={3}
                         py={2}
                       >
-                        <Text color="gray.200" textTransform="capitalize">
-                          {record.action} ({record.status})
-                        </Text>
-                        <Text color="gray.500" fontSize="xs">
-                          {formatUtcTimestamp(record.created_at)}
-                        </Text>
+                        <Stack gap={0}>
+                          <Text color="gray.200" textTransform="capitalize">
+                            {record.action.replaceAll("_", " ")} (
+                            {record.status})
+                          </Text>
+                          {record.error ? (
+                            <Text color="red.300" fontSize="xs">
+                              {record.error}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                        <Flex align="center" gap={2}>
+                          <Text color="gray.500" fontSize="xs">
+                            {formatUtcTimestamp(record.created_at)}
+                          </Text>
+                          {record.status === "failed" &&
+                          record.action !== "drive_setup" ? (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              loading={
+                                retryPublicationMutation.isPending &&
+                                retryPublicationMutation.variables === record.id
+                              }
+                              onClick={() =>
+                                retryPublicationMutation.mutate(record.id)
+                              }
+                            >
+                              Retry
+                            </Button>
+                          ) : null}
+                        </Flex>
                       </Flex>
                     ))
                   )}
@@ -1658,7 +1673,6 @@ const SessionEditorPage = () => {
                   void draftMutation.mutateAsync({
                     title: form.state.values.title.trim(),
                     date: nextDate,
-                    status: form.state.values.status,
                   });
                 }}
                 disabled={isAnySavePending}
@@ -1684,14 +1698,32 @@ const SessionEditorPage = () => {
                   void publishMutation.mutateAsync({
                     title: form.state.values.title.trim(),
                     date: nextDate,
-                    status: form.state.values.status,
                   });
                 }}
-                disabled={isAnySavePending || Boolean(session?.published_at)}
+                disabled={
+                  isAnySavePending || readinessQuery.data?.ready !== true
+                }
                 loading={publishMutation.isPending}
               >
-                {session?.published_at ? "Published" : "Publish Session"}
+                {session?.published_at
+                  ? "Republish Session"
+                  : "Publish Session"}
               </Button>
+              {session?.published_at && !session?.archived_at ? (
+                <Button
+                  variant="outline"
+                  borderColor="whiteAlpha.300"
+                  color="white"
+                  disabled={isAnySavePending}
+                  onClick={() => {
+                    void archiveSession(sessionId).then(() =>
+                      invalidateEditorQueries(),
+                    );
+                  }}
+                >
+                  Archive Session
+                </Button>
+              ) : null}
             </Flex>
           </Flex>
         </Box>

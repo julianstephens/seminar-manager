@@ -8,8 +8,16 @@ export async function up(db: Kysely<any>): Promise<void> {
   await db.schema
     .createTable("seminar_participant")
     .addColumn("id", "serial", (col) => col.primaryKey())
-    .addColumn("seminar_id", "uuid", (col) => col.notNull())
-    .addColumn("participant_id", "integer", (col) => col.notNull())
+    .addColumn("seminar_id", "uuid", (col) =>
+      col.notNull().references("seminar.id").onDelete("cascade"),
+    )
+    .addColumn("participant_id", "integer", (col) =>
+      col.notNull().references("participant.id").onDelete("cascade"),
+    )
+    .addUniqueConstraint("seminar_participant_unique", [
+      "seminar_id",
+      "participant_id",
+    ])
     .execute();
 }
 

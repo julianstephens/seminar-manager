@@ -2,7 +2,6 @@ export type SessionSummaryArgs = {
   data: {
     date: string;
     published_at?: string | null;
-    status?: "scheduled" | "completed" | "canceled";
   };
 }[];
 

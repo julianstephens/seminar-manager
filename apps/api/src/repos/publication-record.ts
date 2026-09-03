@@ -5,10 +5,11 @@ export const createPublicationRecord = async (
   db: Kysely<Database>,
   values: {
     session_id: string;
-    action: "created" | "updated" | "deleted";
-    participant_id: number;
-    external_id: string;
-    status?: "pending" | "success" | "failed";
+    action:
+      "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+    participant_id?: number | null;
+    external_id?: string | null;
+    status?: "success" | "failed";
     error?: string | null;
   },
 ) => {
@@ -16,7 +17,7 @@ export const createPublicationRecord = async (
     .insertInto("publication_record")
     .values({
       ...values,
-      status: values.status ?? "pending",
+      status: values.status ?? "success",
     })
     .returningAll()
     .executeTakeFirst();
@@ -66,10 +67,11 @@ export const updatePublicationRecord = async (
   id: number,
   values: Partial<{
     session_id: string;
-    action: "created" | "updated" | "deleted";
-    participant_id: number;
-    external_id: string;
-    status: "pending" | "success" | "failed";
+    action:
+      "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+    participant_id: number | null;
+    external_id: string | null;
+    status: "success" | "failed";
     error: string | null;
   }>,
 ) => {

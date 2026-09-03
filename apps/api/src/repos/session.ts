@@ -10,7 +10,6 @@ export const createSession = async (
     session_number: number;
     title: string;
     date: Date;
-    status?: "scheduled" | "completed" | "canceled";
     drive_folder_id?: string | null;
     published_at?: Date | null;
     archived_at?: Date | null;
@@ -21,7 +20,6 @@ export const createSession = async (
     .values(
       withUpdatedAt({
         ...values,
-        status: values.status ?? "scheduled",
       }),
     )
     .returningAll()
@@ -75,7 +73,6 @@ export const updateSession = async (
     session_number: number;
     title: string;
     date: Date;
-    status: "scheduled" | "completed" | "canceled";
     drive_folder_id: string | null;
     published_at: Date | null;
     archived_at: Date | null;

@@ -13,6 +13,8 @@ import {
   getResourceById,
   getResourcesBySession,
   getSessionById,
+  getParticipantById,
+  getSeminarParticipantByPair,
   updatePublicationRecord,
   updateResource,
 } from "@/repos";
@@ -198,7 +200,24 @@ export const getAssignmentHandler = async (
 export const createAssignmentHandler = async (
   body: AssignmentCreate,
 ): Promise<AssignmentResponse> => {
-  await getSessionOrThrow(body.session_id);
+  const session = await getSessionOrThrow(body.session_id);
+  const participant = await getParticipantById(db, body.participant_id);
+  const resource = await getResourceById(db, body.resource_id);
+
+  if (!participant) {
+    throw new ApiError(400, "Assignment participant does not exist");
+  }
+  if (!resource || resource.session_id !== session.id) {
+    throw new ApiError(400, "Assignment resource must belong to this session");
+  }
+  const seminarParticipant = await getSeminarParticipantByPair(
+    db,
+    session.seminar_id,
+    participant.id,
+  );
+  if (!seminarParticipant) {
+    throw new ApiError(400, "Assignment participant is not in this seminar");
+  }
 
   const existingAssignment = await db
     .selectFrom("assignment")

@@ -25,13 +25,22 @@ describe("setupApp", () => {
     assert.equal(response.statusCode, 200);
   });
 
+  it("registers the scheduler once the app is ready", async () => {
+    const app = await setupApp();
+
+    await app.ready();
+
+    assert.ok(app.scheduler);
+    assert.ok(typeof app.scheduler.addCronJob === "function");
+  });
+
   it("registers the /api routes used by the web client", async () => {
     const app = await setupApp();
     const routes = app.printRoutes();
 
     assert.match(routes, /api\//);
     assert.match(routes, /participants \(GET, HEAD, POST\)/);
-    assert.match(routes, /:participant_id \(PATCH\)/);
+    assert.match(routes, /:participant_id \(DELETE, PATCH\)/);
   });
 
   it("allows a participant to receive multiple resource assignments in one session", async () => {
@@ -71,7 +80,6 @@ describe("setupApp", () => {
       session_number: 1,
       title: "Session 01",
       date: new Date("2024-01-01T10:00:00.000Z"),
-      status: "scheduled",
     });
 
     assert.ok(session);
@@ -86,7 +94,7 @@ describe("setupApp", () => {
         session_id: session.id,
         name: "Slides",
         url: "https://example.com/slides",
-        visibility: "private",
+        visibility: "individual",
       },
     });
 
@@ -100,7 +108,7 @@ describe("setupApp", () => {
         session_id: session.id,
         name: "Worksheet",
         url: "https://example.com/worksheet",
-        visibility: "public",
+        visibility: "individual",
       },
     });
 
@@ -184,10 +192,23 @@ describe("setupApp", () => {
       session_number: 1,
       title: "Session 01",
       date: new Date("2024-01-01T10:00:00.000Z"),
-      status: "scheduled",
     });
 
     assert.ok(session);
+
+    const sharedResource = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/resources`,
+      headers: {
+        authorization: `Bearer ${sessionToken.access_token}`,
+      },
+      payload: {
+        name: "Seminar overview",
+        url: "https://drive.google.com/file/d/overview",
+        visibility: "shared",
+      },
+    });
+    assert.equal(sharedResource.statusCode, 200);
 
     const initialPublish = await app.inject({
       method: "POST",
@@ -209,7 +230,6 @@ describe("setupApp", () => {
       payload: {
         title: "Session 01 Updated",
         date: "2024-01-02T11:30:00.000Z",
-        status: "scheduled",
         published_at: null,
       },
     });
@@ -225,8 +245,8 @@ describe("setupApp", () => {
     assert.equal(republish.statusCode, 200);
 
     const records = await getPublicationRecordsBySession(db, session.id);
-    assert.equal(records.length, 2);
-    assert.equal(records[0]?.action, "updated");
+    assert.equal(records.length, 4);
+    assert.equal(records[0]?.action, "channel_message");
     assert.equal(records[0]?.status, "success");
   });
 });

@@ -11,6 +11,7 @@ const envSchema = z.object({
   DISCORD_BOT_TOKEN: z.string(),
   DISCORD_GUILD_ID: z.string(),
   SESSION_SECRET: z.string(),
+  ADMIN_PASSWORD: z.string().min(1),
 });
 
 const _env = envSchema.safeParse(process.env);

@@ -16,6 +16,18 @@ import type {
   SessionUpdate,
 } from "schemas";
 
+export type PublicationResult = {
+  session_id: string;
+  status: "published" | "archived";
+  readiness: { ready: boolean; issues: string[] };
+  results: {
+    drive: "success" | "failed";
+    channel_message?: "success" | "failed";
+    archive_message?: "success" | "failed";
+    participant_dms: { participant_id: number; status: "success" | "failed" }[];
+  };
+};
+
 export const seminarQueryKeys = {
   all: ["seminars"] as const,
   list: () => [...seminarQueryKeys.all],
@@ -175,10 +187,10 @@ export const fetchSeminarParticipants = async (
 };
 
 export const createParticipant = async (
-  _seminarId: string,
+  seminarId: string,
   payload: ParticipantCreate,
 ): Promise<ParticipantResponse> => {
-  const response = await authFetch("/api/participants", {
+  const response = await authFetch(`/api/seminars/${seminarId}/participants`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -405,6 +417,36 @@ export const fetchPublicationRecords = async (
   return (await response.json()) as PublicationRecordResponse[];
 };
 
+export const retryPublication = async (
+  publicationId: number,
+): Promise<PublicationRecordResponse> => {
+  const response = await authFetch(`/api/publications/${publicationId}/retry`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiErrorMessage(response, "Unable to retry Discord delivery."),
+    );
+  }
+
+  return (await response.json()) as PublicationRecordResponse;
+};
+
+export const fetchSessionReadiness = async (
+  sessionId: string,
+): Promise<{ ready: boolean; issues: string[] }> => {
+  const response = await authFetch(`/api/sessions/${sessionId}/readiness`);
+  if (!response.ok)
+    throw new Error(
+      await readApiErrorMessage(
+        response,
+        "Unable to validate session readiness.",
+      ),
+    );
+  return (await response.json()) as { ready: boolean; issues: string[] };
+};
+
 export const saveSessionDraft = async (
   seminarId: string,
   sessionId: string,
@@ -420,7 +462,7 @@ export const publishSession = async (
   _seminarId: string,
   sessionId: string,
   payload: SessionUpdate,
-): Promise<SessionResponse> => {
+): Promise<PublicationResult> => {
   const response = await authFetch(`/api/sessions/${sessionId}/publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -435,5 +477,28 @@ export const publishSession = async (
     throw new Error(message);
   }
 
-  return (await response.json()) as SessionResponse;
+  return (await response.json()) as PublicationResult;
+};
+
+export const archiveSession = async (
+  sessionId: string,
+): Promise<PublicationResult> => {
+  const response = await authFetch(`/api/sessions/${sessionId}/archive`, {
+    method: "POST",
+  });
+  if (!response.ok)
+    throw new Error(
+      await readApiErrorMessage(response, "Unable to archive session."),
+    );
+  return (await response.json()) as PublicationResult;
+};
+
+export const deleteResource = async (resourceId: string): Promise<void> => {
+  const response = await authFetch(`/api/resources/${resourceId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok)
+    throw new Error(
+      await readApiErrorMessage(response, "Unable to remove resource."),
+    );
 };

@@ -12,7 +12,7 @@ export const ResourceSchema = z.object({
   session_id: z.uuid(),
   name: z.string().min(1, "Resource name is required"),
   url: z.url("Resource URL must be a valid URL"),
-  visibility: z.enum(["public", "private"]),
+  visibility: z.enum(["shared", "individual"]),
   created_at: requiredDate,
   updated_at: requiredDate,
 });
@@ -27,7 +27,7 @@ export const ResourceCreateSchema = z.object({
   session_id: z.uuid(),
   name: z.string().min(1, "Resource name is required"),
   url: z.url("Resource URL must be a valid URL"),
-  visibility: z.enum(["public", "private"]).default("private"),
+  visibility: z.enum(["shared", "individual"]).default("individual"),
 });
 export type ResourceCreate = z.infer<typeof ResourceCreateSchema>;
 
@@ -73,10 +73,15 @@ export type SeminarParticipantCreate = z.infer<
 export const PublicationRecordSchema = z.object({
   id: z.number().int().positive(),
   session_id: z.uuid(),
-  action: z.enum(["created", "updated", "deleted"]),
-  participant_id: z.number().int().positive(),
-  external_id: z.string().min(1, "External ID is required"),
-  status: z.enum(["pending", "success", "failed"]),
+  action: z.enum([
+    "channel_message",
+    "participant_dm",
+    "drive_setup",
+    "archive_message",
+  ]),
+  participant_id: z.number().int().positive().nullable(),
+  external_id: z.string().nullable(),
+  status: z.enum(["success", "failed"]),
   error: z.string().nullable(),
   created_at: requiredDate,
 });
@@ -91,10 +96,15 @@ export type PublicationRecordResponse = z.infer<
 
 export const PublicationRecordCreateSchema = z.object({
   session_id: z.uuid(),
-  action: z.enum(["created", "updated", "deleted"]),
-  participant_id: z.number().int().positive(),
-  external_id: z.string().min(1, "External ID is required"),
-  status: z.enum(["pending", "success", "failed"]).default("pending"),
+  action: z.enum([
+    "channel_message",
+    "participant_dm",
+    "drive_setup",
+    "archive_message",
+  ]),
+  participant_id: z.number().int().positive().optional().nullable(),
+  external_id: z.string().optional().nullable(),
+  status: z.enum(["success", "failed"]).default("success"),
   error: z.string().optional().nullable(),
 });
 export type PublicationRecordCreate = z.infer<

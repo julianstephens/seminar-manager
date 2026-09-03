@@ -10,9 +10,15 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn("id", "uuid", (col) =>
       col.primaryKey().defaultTo(sql`gen_random_uuid()`),
     )
-    .addColumn("session_id", "uuid", (col) => col.notNull())
-    .addColumn("participant_id", "integer", (col) => col.notNull())
-    .addColumn("resource_id", "uuid", (col) => col.notNull())
+    .addColumn("session_id", "uuid", (col) =>
+      col.notNull().references("session.id").onDelete("cascade"),
+    )
+    .addColumn("participant_id", "integer", (col) =>
+      col.notNull().references("participant.id").onDelete("cascade"),
+    )
+    .addColumn("resource_id", "uuid", (col) =>
+      col.notNull().references("resource.id").onDelete("cascade"),
+    )
     .addColumn("created_at", "timestamp", (col) =>
       col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`),
     )

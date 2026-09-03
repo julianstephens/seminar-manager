@@ -9,7 +9,7 @@ export const createResource = async (
     session_id: string;
     name: string;
     url: string;
-    visibility?: "public" | "private";
+    visibility?: "shared" | "individual";
   },
 ) => {
   const resource = await db
@@ -17,7 +17,7 @@ export const createResource = async (
     .values(
       withUpdatedAt({
         ...values,
-        visibility: values.visibility ?? "private",
+        visibility: values.visibility ?? "individual",
       }),
     )
     .returningAll()
@@ -54,7 +54,7 @@ export const updateResource = async (
     session_id: string;
     name: string;
     url: string;
-    visibility: "public" | "private";
+    visibility: "shared" | "individual";
   }>,
 ) => {
   return (

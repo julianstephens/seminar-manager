@@ -14,7 +14,7 @@ describe("artifact response helpers", () => {
       session_id: "session-1",
       name: "Slides",
       url: "https://example.com/slides",
-      visibility: "private",
+      visibility: "individual",
       created_at: new Date("2024-01-01T00:00:00Z"),
       updated_at: new Date("2024-01-02T00:00:00Z"),
     });
@@ -26,9 +26,9 @@ describe("artifact response helpers", () => {
         session_id: "session-1",
         name: "Slides",
         url: "https://example.com/slides",
-        visibility: "private",
-        created_at: new Date("2024-01-01T00:00:00Z"),
-        updated_at: new Date("2024-01-02T00:00:00Z"),
+        visibility: "individual",
+        created_at: "2024-01-01T00:00:00.000Z",
+        updated_at: "2024-01-02T00:00:00.000Z",
       },
     });
   });
@@ -49,7 +49,7 @@ describe("artifact response helpers", () => {
         session_id: "session-1",
         participant_id: 7,
         resource_id: "resource-1",
-        created_at: new Date("2024-01-01T00:00:00Z"),
+        created_at: "2024-01-01T00:00:00.000Z",
       },
     });
   });
@@ -58,10 +58,10 @@ describe("artifact response helpers", () => {
     const result = publicationRecordPayload({
       id: 3,
       session_id: "session-1",
-      action: "created",
-      participant_id: 7,
-      external_id: "external-42",
-      status: "pending",
+      action: "channel_message",
+      participant_id: null,
+      external_id: null,
+      status: "success",
       error: null,
       created_at: new Date("2024-01-01T00:00:00Z"),
     });
@@ -71,12 +71,12 @@ describe("artifact response helpers", () => {
       data: {
         id: 3,
         session_id: "session-1",
-        action: "created",
-        participant_id: 7,
-        external_id: "external-42",
-        status: "pending",
+        action: "channel_message",
+        participant_id: null,
+        external_id: null,
+        status: "success",
         error: null,
-        created_at: new Date("2024-01-01T00:00:00Z"),
+        created_at: "2024-01-01T00:00:00.000Z",
       },
     });
   });

@@ -1,4 +1,5 @@
 import db from "@/db";
+import { env } from "@/env";
 import { ApiError } from "@/handlers";
 import {
   createAuthSession,
@@ -95,24 +96,27 @@ export const loginHandler = async (
     throw new ApiError(400, "Client fingerprint is required");
   }
 
-  const passwordHash = hashPassword(req.password);
+  const passwordHash = hashPassword(env.ADMIN_PASSWORD);
   const existingUser = await getUserByName(db, "admin");
   const existingSessions = existingUser
     ? await getUserSessions(db, existingUser.id)
     : [];
 
+  if (req.password !== env.ADMIN_PASSWORD) {
+    throw new InvalidCredentialsError("Invalid password");
+  }
+
   const action = resolveLoginAction({
-    user: existingUser,
+    user: existingUser
+      ? { ...existingUser, password_hash: passwordHash }
+      : null,
     passwordHash,
     clientFingerprint: req.client_fingerprint,
     sessions: existingSessions,
   });
 
-  if (action === "invalid-password") {
-    throw new InvalidCredentialsError("Invalid password");
-  }
-
-  const user = existingUser ?? (await createUser(db, "admin", req.password));
+  const user =
+    existingUser ?? (await createUser(db, "admin", env.ADMIN_PASSWORD));
 
   if (!user) {
     throw new ApiError(500, "Unable to create user");

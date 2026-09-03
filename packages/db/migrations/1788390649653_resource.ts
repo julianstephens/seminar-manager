@@ -7,14 +7,16 @@ export async function up(db: Kysely<any>): Promise<void> {
   // For more info, see: https://kysely.dev/docs/migrations
   await db.schema
     .createType("resource_visibility_enum")
-    .asEnum(["public", "private"])
+    .asEnum(["shared", "individual"])
     .execute();
   await db.schema
     .createTable("resource")
     .addColumn("id", "uuid", (col) =>
       col.primaryKey().defaultTo(sql`gen_random_uuid()`),
     )
-    .addColumn("session_id", "uuid", (col) => col.notNull())
+    .addColumn("session_id", "uuid", (col) =>
+      col.notNull().references("session.id").onDelete("cascade"),
+    )
     .addColumn("name", "varchar", (col) => col.notNull())
     .addColumn("url", "varchar", (col) => col.notNull())
     .addColumn("visibility", sql`resource_visibility_enum`, (col) =>

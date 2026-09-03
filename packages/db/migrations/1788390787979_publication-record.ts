@@ -7,21 +7,30 @@ export async function up(db: Kysely<any>): Promise<void> {
   // For more info, see: https://kysely.dev/docs/migrations
   await db.schema
     .createType("publication_record_action_enum")
-    .asEnum(["created", "updated", "deleted"])
+    .asEnum([
+      "channel_message",
+      "participant_dm",
+      "drive_setup",
+      "archive_message",
+    ])
     .execute();
   await db.schema
     .createType("publication_record_status_enum")
-    .asEnum(["pending", "success", "failed"])
+    .asEnum(["success", "failed"])
     .execute();
   await db.schema
     .createTable("publication_record")
     .addColumn("id", "serial", (col) => col.primaryKey())
-    .addColumn("session_id", "uuid", (col) => col.notNull())
+    .addColumn("session_id", "uuid", (col) =>
+      col.notNull().references("session.id").onDelete("cascade"),
+    )
     .addColumn("action", sql`publication_record_action_enum`, (col) =>
       col.notNull(),
     )
-    .addColumn("participant_id", "integer", (col) => col.notNull())
-    .addColumn("external_id", "text", (col) => col.notNull())
+    .addColumn("participant_id", "integer", (col) =>
+      col.references("participant.id").onDelete("cascade"),
+    )
+    .addColumn("external_id", "text")
     .addColumn("status", sql`publication_record_status_enum`, (col) =>
       col.notNull(),
     )
