@@ -37,6 +37,7 @@ import {
   Flex,
   Heading,
   Input,
+  Link,
   Portal,
   Stack,
   Text,
@@ -44,7 +45,7 @@ import {
 import { useForm, useSelector } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LuFileText, LuLink, LuPlus } from "react-icons/lu";
+import { LuExternalLink, LuFileText, LuLink, LuPlus } from "react-icons/lu";
 import { useNavigate, useParams } from "react-router";
 import {
   AssignmentCreateSchema,
@@ -1133,11 +1134,35 @@ const SessionEditorPage = () => {
                         py={2}
                         gap={3}
                       >
-                        <Flex align="center" gap={2} minW="0">
+                        <Flex align="center" gap={2} minW="0" flex="1">
                           <LuFileText />
-                          <Text color="white" fontWeight="600" truncate>
-                            {resource.name}
-                          </Text>
+                          <Box minW="0">
+                            <Text color="white" fontWeight="600" truncate>
+                              {resource.name}
+                            </Text>
+                            <Link
+                              href={resource.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <Text
+                                display="block"
+                                color="gray.400"
+                                maxW="80%"
+                                fontSize="xs"
+                                truncate
+                                _hover={{ color: "var(--accent-soft)" }}
+                                _focusVisible={{
+                                  outline: "2px solid",
+                                  outlineColor: "var(--accent-soft)",
+                                  outlineOffset: "2px",
+                                  borderRadius: "sm",
+                                }}
+                              >
+                                {resource.url}
+                              </Text>
+                            </Link>
+                          </Box>
                         </Flex>
                         <Flex
                           gap={3}
@@ -1146,6 +1171,21 @@ const SessionEditorPage = () => {
                           fontSize="sm"
                         >
                           <Text>{resource.visibility}</Text>
+                          <Link
+                            href={resource.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              color="var(--accent-soft)"
+                              _hover={{ bg: "rgba(216, 179, 140, 0.1)" }}
+                            >
+                              <LuExternalLink />
+                              Open
+                            </Button>
+                          </Link>
                           <Button
                             size="xs"
                             variant="ghost"
