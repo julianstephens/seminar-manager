@@ -144,6 +144,13 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: "pnpm"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
 
       - name: Log in to GitHub Container registry
         uses: docker/login-action@v4
@@ -173,4 +180,4 @@ jobs:
             echo "Warning: Manifest file not found at $MANIFEST_PATH, skipping deployment"
             exit 0
           fi
-          npx coolify-deploy --manifest "$MANIFEST_PATH" apply --tag "${{ steps.sha.outputs.sha }}"
+          pnpm dlx coolify-deploy --manifest "$MANIFEST_PATH" apply --tag "${{ steps.sha.outputs.sha }}"
