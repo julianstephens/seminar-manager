@@ -861,12 +861,19 @@ export const setupApp = async (options?: {
   });
 
   // POST /api/sessions/:id/publish
+  const PublishSessionBodySchema = z
+    .object({
+      message_appendix: z.string().max(2_000).optional(),
+    })
+    .default({});
+
   typedApp.route({
     method: "POST",
     url: "/api/sessions/:id/publish",
     schema: {
       tags: ["sessions"],
       params: z.object({ id: z.uuid() }),
+      body: PublishSessionBodySchema,
       response: {
         200: PublicationResultSchema,
         400: ApiErrorResponseSchema,
@@ -881,6 +888,7 @@ export const setupApp = async (options?: {
         request.params.id,
         options?.discordService,
         options?.driveService,
+        request.body.message_appendix,
       );
     },
   });

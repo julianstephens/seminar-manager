@@ -516,7 +516,7 @@ export const prepareSessionDriveFolder = async (
 export const publishSession = async (
   _seminarId: string,
   sessionId: string,
-  payload: SessionUpdate,
+  payload: { message_appendix?: string },
 ): Promise<PublicationResult> => {
   const response = await authFetch(`/api/sessions/${sessionId}/publish`, {
     method: "POST",

@@ -15,8 +15,8 @@ import {
   prepareSessionDriveFolder,
   publicationRecordQueryKeys,
   publishSession,
-  retryPublication,
   resourceQueryKeys,
+  retryPublication,
   saveSessionDraft,
   seminarQueryKeys,
   sessionQueryKeys,
@@ -47,6 +47,7 @@ import {
   Portal,
   Stack,
   Text,
+  Textarea,
 } from "@chakra-ui/react";
 import { useForm, useSelector } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -69,6 +70,7 @@ import {
   ResourceCreateSchema,
   SessionUpdateSchema,
   type LogoutResponse,
+  type SessionResponse,
 } from "schemas";
 
 const toDateTimeInputValue = (isoValue: string) => {
@@ -100,6 +102,7 @@ const SessionEditorPage = () => {
     | null
   >(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [messageAppendix, setMessageAppendix] = useState("");
   const [retryStatus, setRetryStatus] = useState<{
     kind: "success" | "error";
     message: string;
@@ -584,15 +587,27 @@ const SessionEditorPage = () => {
   });
 
   const publishMutation = useMutation({
-    mutationFn: (payload: { title: string; date: string }) =>
+    mutationFn: (payload: { message_appendix?: string }) =>
       publishSession(seminarId ?? "", sessionId ?? "", {
         ...payload,
-        published_at: new Date().toISOString(),
       }),
-    onSuccess: async (response) => {
+    onSuccess: async () => {
       void queryClient.setQueryData(
         sessionQueryKeys.detail(seminarId ?? "", sessionId ?? ""),
-        response,
+        (current: SessionResponse | undefined) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            data: {
+              ...current.data,
+              published_at: new Date().toISOString(),
+              status: "published",
+            },
+          };
+        },
       );
       await invalidateEditorQueries();
       await queryClient.invalidateQueries({
@@ -600,6 +615,7 @@ const SessionEditorPage = () => {
       });
       form.setFieldValue("published", true);
       setSubmitError(null);
+      setMessageAppendix("");
       setPendingConfirmation(null);
     },
     onError: (error: Error) => {
@@ -2122,6 +2138,7 @@ const SessionEditorPage = () => {
                   setPendingConfirmation({
                     kind: session.published_at ? "republish" : "publish",
                   });
+                  setMessageAppendix("");
                 }}
                 disabled={
                   isAnySavePending || readinessQuery.data?.ready !== true
@@ -2211,12 +2228,29 @@ const SessionEditorPage = () => {
               return;
             }
             publishMutation.mutate({
-              title: form.state.values.title.trim(),
-              date: nextDate,
+              message_appendix: messageAppendix.trim() || undefined,
             });
           }
         }}
-      />
+      >
+        {pendingConfirmation?.kind === "publish" ||
+        pendingConfirmation?.kind === "republish" ? (
+          <Field.Root>
+            <Field.Label>Additional channel message (optional)</Field.Label>
+            <Textarea
+              value={messageAppendix}
+              onChange={(event) => setMessageAppendix(event.target.value)}
+              placeholder="Add a Markdown-formatted note…"
+              rows={5}
+              maxLength={2_000}
+              disabled={publishMutation.isPending}
+            />
+            <Field.HelperText color="gray.400">
+              Appended to the Discord channel post. Markdown is supported.
+            </Field.HelperText>
+          </Field.Root>
+        ) : null}
+      </ConfirmationDialog>
 
       <ConfirmationDialog
         open={navigationBlocker.state === "blocked"}

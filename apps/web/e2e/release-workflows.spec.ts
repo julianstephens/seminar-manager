@@ -57,6 +57,8 @@ const mockSessionEditor = async (
   page: Page,
   options: { failAutosave?: boolean; onPublish?: () => void } = {},
 ) => {
+  let publishedAt: string | null = session.published_at;
+
   await page.route("**/api/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -66,7 +68,13 @@ const mockSessionEditor = async (
       return json(route, { data: seminar });
     }
     if (url.pathname === `/api/sessions/${sessionId}` && method === "GET") {
-      return json(route, { data: session });
+      return json(route, {
+        data: {
+          ...session,
+          published_at: publishedAt,
+          status: publishedAt ? "published" : session.status,
+        },
+      });
     }
     if (url.pathname === `/api/sessions/${sessionId}` && method === "PATCH") {
       if (options.failAutosave) {
@@ -102,6 +110,7 @@ const mockSessionEditor = async (
     if (url.pathname === "/api/publication-records") return json(route, []);
     if (url.pathname === `/api/sessions/${sessionId}/publish`) {
       options.onPublish?.();
+      publishedAt = now;
       return json(route, {
         session_id: sessionId,
         status: "published",
@@ -190,4 +199,10 @@ test("confirms and publishes a ready session", async ({ page }) => {
   );
   await page.getByRole("button", { name: "Publish session" }).click();
   await expect.poll(() => published).toBe(true);
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Unable to load session editor" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Published:")).toBeVisible();
 });

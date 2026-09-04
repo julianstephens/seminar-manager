@@ -75,6 +75,18 @@ describe("Discord publication messages", () => {
     );
   });
 
+  it("appends an optional Markdown message to the seminar channel post", () => {
+    const message = formatChannelMessage(
+      seminar,
+      session,
+      [resource],
+      null,
+      "**Please bring:** your notes",
+    );
+
+    assert.match(message.content, /\n\n\*\*Please bring:\*\* your notes$/);
+  });
+
   it("formats assigned resources for a participant", () => {
     const message = formatDirectMessage(seminar, session, [resource]);
     assert.match(message.content, /Your reading for this session is/);

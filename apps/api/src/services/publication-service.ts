@@ -1,17 +1,18 @@
-import type { Database } from "db";
-import type { Kysely } from "kysely";
+import { env } from "@/env";
 import {
   DiscordJsService,
   discordErrorMessage,
   type DiscordService,
 } from "@/integrations/discord/discord-service";
-import { env } from "@/env";
 import {
   GoogleDriveService,
   driveErrorMessage,
   type DriveService,
 } from "@/integrations/google-drive/drive-service";
+import type { Database } from "db";
+import type { Kysely } from "kysely";
 
+import { ApiError } from "@/handlers";
 import {
   createPublicationRecord,
   getAssignmentsBySession,
@@ -23,7 +24,6 @@ import {
   updateSeminar,
   updateSession,
 } from "@/repos";
-import { ApiError } from "@/handlers";
 
 export type SessionLifecycle = "draft" | "ready" | "published" | "archived";
 export type PublicationAction =
@@ -58,6 +58,7 @@ export const formatChannelMessage = (
   session: NonNullable<SessionDetails>,
   resources: ResourceDetails[],
   sessionFolderUrl?: string | null,
+  messageAppendix?: string,
 ): { content: string } => {
   const shared = resources.filter(({ visibility }) => visibility === "shared");
   const materials = shared.length
@@ -65,20 +66,27 @@ export const formatChannelMessage = (
     : "- No shared materials";
   const date = new Intl.DateTimeFormat("en-US", {
     dateStyle: "long",
-    timeZone: "UTC",
+    timeStyle: "short",
   }).format(session.date);
 
-  return {
-    content: [
-      `**${seminar.name} — Session ${session.session_number}**`,
-      `**${session.title}**`,
-      date,
-      "**Materials**",
-      materials,
-      "Please complete your assigned reading before the seminar.",
-      ...(sessionFolderUrl ? [`[Session materials](${sessionFolderUrl})`] : []),
-    ].join("\n\n"),
-  };
+  const content = [
+    `**${seminar.name} — Session ${session.session_number}**`,
+    `**${session.title}**`,
+    date,
+    "**Materials**",
+    materials,
+    ...(sessionFolderUrl ? [`[Session folder](${sessionFolderUrl})`] : []),
+    ...(messageAppendix?.trim() ? ["---", messageAppendix.trim()] : []),
+  ].join("\n\n");
+
+  if (content.length > 2_000) {
+    throw new ApiError(
+      400,
+      "Channel message exceeds Discord's 2,000 character limit",
+    );
+  }
+
+  return { content };
 };
 
 export const formatDirectMessage = (
@@ -306,6 +314,7 @@ export const publishSession = async (
   sessionId: string,
   discordService: DiscordService = discord,
   driveService: DriveService = drive,
+  messageAppendix?: string,
 ): Promise<PublicationResult> => {
   const session = await getSessionById(db, sessionId);
   if (!session) throw new ApiError(404, "Session not found");
@@ -346,6 +355,7 @@ export const publishSession = async (
       session,
       resources,
       driveResult.folderUrl,
+      messageAppendix,
     );
     if (priorChannelMessage?.external_id) {
       await discordService.editChannelMessage(

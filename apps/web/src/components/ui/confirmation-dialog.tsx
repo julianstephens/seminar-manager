@@ -1,9 +1,18 @@
-import { Button, CloseButton, Dialog, Portal, Text } from "@chakra-ui/react";
+import {
+  Button,
+  CloseButton,
+  Dialog,
+  Portal,
+  Stack,
+  Text,
+} from "@chakra-ui/react";
+import type { ReactNode } from "react";
 
 type ConfirmationDialogProps = {
   open: boolean;
   title: string;
   description: string;
+  children?: ReactNode;
   confirmLabel: string;
   tone?: "danger" | "primary";
   isPending?: boolean;
@@ -15,6 +24,7 @@ export const ConfirmationDialog = ({
   open,
   title,
   description,
+  children,
   confirmLabel,
   tone = "danger",
   isPending = false,
@@ -52,11 +62,14 @@ export const ConfirmationDialog = ({
             </Dialog.CloseTrigger>
           </Dialog.Header>
           <Dialog.Body px={6} py={3}>
-            <Dialog.Description asChild>
-              <Text color="gray.300" lineHeight="1.6">
-                {description}
-              </Text>
-            </Dialog.Description>
+            <Stack gap={4}>
+              <Dialog.Description asChild>
+                <Text color="gray.300" lineHeight="1.6">
+                  {description}
+                </Text>
+              </Dialog.Description>
+              {children}
+            </Stack>
           </Dialog.Body>
           <Dialog.Footer px={6} pt={3} pb={6}>
             <Button
