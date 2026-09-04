@@ -43,9 +43,12 @@ RUN pnpm --filter web build
 
 FROM nginx:alpine AS runner
 
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+ARG VITE_PROXY_TARGET=http://api:3000
+ENV VITE_PROXY_TARGET=$VITE_PROXY_TARGET
+
+COPY apps/web/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/bin/sh", "-c", "envsubst '$${VITE_PROXY_TARGET}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
