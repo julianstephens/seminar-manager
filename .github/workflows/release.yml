@@ -58,7 +58,7 @@ jobs:
       SERVICE_MAP: >
         {
           "api": "apps/api/Dockerfile",
-          "web": "apps/web/Dockerfile",
+          "web": "apps/web/Dockerfile"
         }
 
     steps:
