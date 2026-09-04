@@ -1,3 +1,7 @@
+## v0.1.2
+
+- Added curl installation in API Dockerfile
+
 ## v0.1.1
 
 - Added Coolify deployment configuration

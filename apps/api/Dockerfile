@@ -35,6 +35,8 @@ FROM node:24-alpine AS runner
 
 ENV NODE_ENV=production
 
+RUN apk add --no-cache curl
+
 WORKDIR /app
 
 COPY --from=builder --chown=node:node /prod/api ./
