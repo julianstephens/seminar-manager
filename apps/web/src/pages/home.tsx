@@ -7,6 +7,7 @@ import {
   sessionQueryKeys,
 } from "@/api";
 import { Layout } from "@/components/layout";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import {
   AUTH_TOKEN_KEY,
   authFetch,
@@ -51,6 +52,10 @@ const HomePage = () => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [seminarToDelete, setSeminarToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const seminarsQuery = useQuery({
     queryKey: seminarQueryKeys.list(),
@@ -96,6 +101,7 @@ const HomePage = () => {
     mutationFn: deleteSeminar,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: seminarQueryKeys.all });
+      setSeminarToDelete(null);
     },
     onError: (error: Error) => {
       setSubmitError(error.message);
@@ -303,7 +309,10 @@ const HomePage = () => {
                       loading={deleteSeminarMutation.isPending}
                       disabled={deleteSeminarMutation.isPending}
                       onClick={() => {
-                        void deleteSeminarMutation.mutateAsync(seminar.id);
+                        setSeminarToDelete({
+                          id: seminar.id,
+                          name: seminar.name,
+                        });
                       }}
                     >
                       <Icon as={LuTrash2} boxSize={4} />
@@ -348,6 +357,20 @@ const HomePage = () => {
             </Stack>
           </Box>
         )}
+
+        <ConfirmationDialog
+          open={seminarToDelete !== null}
+          title="Delete seminar?"
+          description={`“${seminarToDelete?.name ?? "This seminar"}” and its sessions will be permanently deleted. This action cannot be undone.`}
+          confirmLabel="Delete seminar"
+          isPending={deleteSeminarMutation.isPending}
+          onCancel={() => setSeminarToDelete(null)}
+          onConfirm={() => {
+            if (seminarToDelete) {
+              deleteSeminarMutation.mutate(seminarToDelete.id);
+            }
+          }}
+        />
 
         <Dialog.Root
           open={isCreateOpen}

@@ -6,6 +6,11 @@ import {
   type DiscordService,
 } from "@/integrations/discord/discord-service";
 import { env } from "@/env";
+import {
+  GoogleDriveService,
+  driveErrorMessage,
+  type DriveService,
+} from "@/integrations/google-drive/drive-service";
 
 import {
   createPublicationRecord,
@@ -15,6 +20,7 @@ import {
   getSeminarById,
   getSessionById,
   updatePublicationRecord,
+  updateSeminar,
   updateSession,
 } from "@/repos";
 import { ApiError } from "@/handlers";
@@ -35,6 +41,11 @@ export type PublicationResult = {
     participant_dms: { participant_id: number; status: "success" | "failed" }[];
   };
 };
+export type DrivePreparationResult = {
+  session_id: string;
+  folder_id: string;
+  folder_url: string;
+};
 
 type SessionDetails = Awaited<ReturnType<typeof getSessionById>> & {};
 type SeminarDetails = NonNullable<Awaited<ReturnType<typeof getSeminarById>>>;
@@ -46,6 +57,7 @@ export const formatChannelMessage = (
   seminar: SeminarDetails,
   session: NonNullable<SessionDetails>,
   resources: ResourceDetails[],
+  sessionFolderUrl?: string | null,
 ): { content: string } => {
   const shared = resources.filter(({ visibility }) => visibility === "shared");
   const materials = shared.length
@@ -64,6 +76,7 @@ export const formatChannelMessage = (
       "**Materials**",
       materials,
       "Please complete your assigned reading before the seminar.",
+      ...(sessionFolderUrl ? [`[Session materials](${sessionFolderUrl})`] : []),
     ].join("\n\n"),
   };
 };
@@ -100,18 +113,16 @@ export const hasSessionAssignment = (
   resources.some((resource) => resource.visibility === "shared") ||
   assignments.length > 0;
 
-// Drive remains a deterministic adapter until its integration is configured.
-const driveIntegration = {
-  ensureDriveFolder: async () => ({
-    status: "success" as const,
-    externalId: null,
-  }),
-};
-
 const discord = new DiscordJsService(
   env.DISCORD_BOT_TOKEN,
   env.DISCORD_GUILD_ID,
 );
+const drive = new GoogleDriveService({
+  clientId: env.GOOGLE_CLIENT_ID,
+  clientSecret: env.GOOGLE_CLIENT_SECRET,
+  refreshToken: env.GOOGLE_REFRESH_TOKEN,
+  rootFolderId: env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+});
 
 const runDiscordOperation = async (
   operation: () => Promise<{ messageId: string } | void>,
@@ -136,6 +147,51 @@ const runDiscordOperation = async (
   }
 };
 
+const ensureDriveFolders = async (
+  db: Kysely<Database>,
+  driveService: DriveService,
+  seminar: NonNullable<Awaited<ReturnType<typeof getSeminarById>>>,
+  session: NonNullable<Awaited<ReturnType<typeof getSessionById>>>,
+): Promise<{
+  status: "success" | "failed";
+  externalId: string | null;
+  error: string | null;
+  folderUrl: string | null;
+}> => {
+  try {
+    const seminarFolder = await driveService.ensureSeminarFolder(seminar);
+    if (seminar.drive_folder_id !== seminarFolder.folderId) {
+      await updateSeminar(db, seminar.id, {
+        drive_folder_id: seminarFolder.folderId,
+      });
+      seminar.drive_folder_id = seminarFolder.folderId;
+    }
+    const sessionFolder = await driveService.ensureSessionFolder(
+      session,
+      seminarFolder.folderId,
+    );
+    if (session.drive_folder_id !== sessionFolder.folderId) {
+      await updateSession(db, session.id, {
+        drive_folder_id: sessionFolder.folderId,
+      });
+      session.drive_folder_id = sessionFolder.folderId;
+    }
+    return {
+      status: "success",
+      externalId: sessionFolder.folderId,
+      error: null,
+      folderUrl: sessionFolder.url,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      externalId: null,
+      error: driveErrorMessage(error),
+      folderUrl: null,
+    };
+  }
+};
+
 const record = async (
   db: Kysely<Database>,
   sessionId: string,
@@ -153,6 +209,50 @@ const record = async (
     status,
     error,
   });
+
+export const prepareSessionDriveFolder = async (
+  db: Kysely<Database>,
+  sessionId: string,
+  driveService: DriveService = drive,
+): Promise<DrivePreparationResult> => {
+  const session = await getSessionById(db, sessionId);
+  if (!session) throw new ApiError(404, "Session not found");
+  const seminar = await getSeminarById(db, session.seminar_id);
+  if (!seminar) throw new ApiError(404, "Seminar not found");
+
+  const driveResult = await ensureDriveFolders(
+    db,
+    driveService,
+    seminar,
+    session,
+  );
+  await record(
+    db,
+    session.id,
+    "drive_setup",
+    driveResult.status,
+    null,
+    driveResult.externalId,
+    driveResult.error,
+  );
+
+  if (
+    driveResult.status === "failed" ||
+    !driveResult.externalId ||
+    !driveResult.folderUrl
+  ) {
+    throw new ApiError(
+      500,
+      driveResult.error ?? "Unable to prepare the Drive folder",
+    );
+  }
+
+  return {
+    session_id: session.id,
+    folder_id: driveResult.externalId,
+    folder_url: driveResult.folderUrl,
+  };
+};
 
 export const getReadiness = async (
   db: Kysely<Database>,
@@ -205,6 +305,7 @@ export const publishSession = async (
   db: Kysely<Database>,
   sessionId: string,
   discordService: DiscordService = discord,
+  driveService: DriveService = drive,
 ): Promise<PublicationResult> => {
   const session = await getSessionById(db, sessionId);
   if (!session) throw new ApiError(404, "Session not found");
@@ -215,14 +316,20 @@ export const publishSession = async (
   const seminar = await getSeminarById(db, session.seminar_id);
   if (!seminar) throw new ApiError(404, "Seminar not found");
   const resources = await getResourcesBySession(db, session.id);
-  const drive = await driveIntegration.ensureDriveFolder();
+  const driveResult = await ensureDriveFolders(
+    db,
+    driveService,
+    seminar,
+    session,
+  );
   await record(
     db,
     session.id,
     "drive_setup",
-    drive.status,
+    driveResult.status,
     null,
-    drive.externalId,
+    driveResult.externalId,
+    driveResult.error,
   );
   const priorChannelMessage = await db
     .selectFrom("publication_record")
@@ -234,7 +341,12 @@ export const publishSession = async (
     .orderBy("created_at", "desc")
     .executeTakeFirst();
   const channel = await runDiscordOperation(async () => {
-    const message = formatChannelMessage(seminar, session, resources);
+    const message = formatChannelMessage(
+      seminar,
+      session,
+      resources,
+      driveResult.folderUrl,
+    );
     if (priorChannelMessage?.external_id) {
       await discordService.editChannelMessage(
         seminar.discord_channel_id,
@@ -302,7 +414,7 @@ export const publishSession = async (
     status: "published",
     readiness,
     results: {
-      drive: drive.status,
+      drive: driveResult.status,
       channel_message: channel.status,
       participant_dms,
     },
@@ -313,20 +425,27 @@ export const archiveSession = async (
   db: Kysely<Database>,
   sessionId: string,
   discordService: DiscordService = discord,
+  driveService: DriveService = drive,
 ): Promise<PublicationResult> => {
   const session = await getSessionById(db, sessionId);
   if (!session) throw new ApiError(404, "Session not found");
   const readiness = await getReadiness(db, session);
   const seminar = await getSeminarById(db, session.seminar_id);
   if (!seminar) throw new ApiError(404, "Seminar not found");
-  const drive = await driveIntegration.ensureDriveFolder();
+  const driveResult = await ensureDriveFolders(
+    db,
+    driveService,
+    seminar,
+    session,
+  );
   await record(
     db,
     session.id,
     "drive_setup",
-    drive.status,
+    driveResult.status,
     null,
-    drive.externalId,
+    driveResult.externalId,
+    driveResult.error,
   );
   const archive = await runDiscordOperation(() =>
     discordService.sendChannelMessage(
@@ -349,7 +468,7 @@ export const archiveSession = async (
     status: "archived",
     readiness,
     results: {
-      drive: drive.status,
+      drive: driveResult.status,
       archive_message: archive.status,
       participant_dms: [],
     },
@@ -360,6 +479,7 @@ export const retryPublication = async (
   db: Kysely<Database>,
   recordId: number,
   discordService: DiscordService = discord,
+  driveService: DriveService = drive,
 ) => {
   const existing = await db
     .selectFrom("publication_record")
@@ -376,7 +496,20 @@ export const retryPublication = async (
   const resources = await getResourcesBySession(db, session.id);
   let result: Awaited<ReturnType<typeof runDiscordOperation>>;
 
-  if (existing.action === "channel_message") {
+  if (existing.action === "drive_setup") {
+    const driveResult = await ensureDriveFolders(
+      db,
+      driveService,
+      seminar,
+      session,
+    );
+    const updated = await updatePublicationRecord(db, recordId, {
+      status: driveResult.status,
+      external_id: driveResult.externalId,
+      error: driveResult.error,
+    });
+    return updated;
+  } else if (existing.action === "channel_message") {
     result = await runDiscordOperation(() =>
       discordService.sendChannelMessage(
         seminar.discord_channel_id,
@@ -408,7 +541,7 @@ export const retryPublication = async (
       ),
     );
   } else {
-    throw new ApiError(400, "This publication action cannot be retried yet");
+    throw new ApiError(400, "This publication action cannot be retried");
   }
 
   const updated = await updatePublicationRecord(db, recordId, {

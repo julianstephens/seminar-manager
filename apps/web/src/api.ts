@@ -28,6 +28,32 @@ export type PublicationResult = {
   };
 };
 
+export type IntegrationStatusResponse = {
+  checked_at: string;
+  discord: IntegrationStatus;
+  google_drive: IntegrationStatus;
+};
+
+export type IntegrationStatus = {
+  status: "connected" | "error" | "not_configured";
+  label?: string;
+  message: string;
+};
+
+export const fetchIntegrationStatus =
+  async (): Promise<IntegrationStatusResponse> => {
+    const response = await authFetch("/api/integrations/status");
+    if (!response.ok) {
+      throw new Error(
+        await readApiErrorMessage(
+          response,
+          "Unable to check integration status.",
+        ),
+      );
+    }
+    return (await response.json()) as IntegrationStatusResponse;
+  };
+
 export const seminarQueryKeys = {
   all: ["seminars"] as const,
   list: () => [...seminarQueryKeys.all],
@@ -426,11 +452,20 @@ export const retryPublication = async (
 
   if (!response.ok) {
     throw new Error(
-      await readApiErrorMessage(response, "Unable to retry Discord delivery."),
+      await readApiErrorMessage(
+        response,
+        "Unable to retry the publication operation.",
+      ),
     );
   }
 
-  return (await response.json()) as PublicationRecordResponse;
+  const result = (await response.json()) as PublicationRecordResponse;
+  if (result.data.status === "failed") {
+    throw new Error(
+      result.data.error ?? "The publication operation failed again.",
+    );
+  }
+  return result;
 };
 
 export const fetchSessionReadiness = async (
@@ -456,6 +491,26 @@ export const saveSessionDraft = async (
     ...payload,
     published_at: null,
   });
+};
+
+export type DrivePreparationResult = {
+  session_id: string;
+  folder_id: string;
+  folder_url: string;
+};
+
+export const prepareSessionDriveFolder = async (
+  sessionId: string,
+): Promise<DrivePreparationResult> => {
+  const response = await authFetch(`/api/sessions/${sessionId}/prepare-drive`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(
+      await readApiErrorMessage(response, "Unable to prepare Drive folder."),
+    );
+  }
+  return (await response.json()) as DrivePreparationResult;
 };
 
 export const publishSession = async (

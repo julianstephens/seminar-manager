@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 
 import db from "@/db";
 import {
@@ -13,9 +13,39 @@ import { createAuthSession, createUser } from "@/repos/auth";
 
 import { setupApp } from "./server";
 
+const appInstances = new Set<Awaited<ReturnType<typeof setupApp>>>();
+const getApp = async () => {
+  const app = await setupApp();
+  appInstances.add(app);
+  return app;
+};
+
+afterEach(async () => {
+  for (const app of appInstances) {
+    await app.close();
+  }
+  appInstances.clear();
+});
+
+after(async () => {
+  await db.destroy();
+});
+
 describe("setupApp", () => {
+  it("returns the API health status without authentication", async () => {
+    const app = await getApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/health",
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { status: "ok" });
+  });
+
   it("allows access to the Swagger docs without authentication", async () => {
-    const app = await setupApp();
+    const app = await getApp();
 
     const response = await app.inject({
       method: "GET",
@@ -26,7 +56,7 @@ describe("setupApp", () => {
   });
 
   it("registers the scheduler once the app is ready", async () => {
-    const app = await setupApp();
+    const app = await getApp();
 
     await app.ready();
 
@@ -35,7 +65,7 @@ describe("setupApp", () => {
   });
 
   it("registers the /api routes used by the web client", async () => {
-    const app = await setupApp();
+    const app = await getApp();
     const routes = app.printRoutes();
 
     assert.match(routes, /api\//);
@@ -44,7 +74,7 @@ describe("setupApp", () => {
   });
 
   it("allows a participant to receive multiple resource assignments in one session", async () => {
-    const app = await setupApp();
+    const app = await getApp();
     const user = await createUser(db, "admin", "test-password");
 
     assert.ok(user);
@@ -156,7 +186,27 @@ describe("setupApp", () => {
   });
 
   it("creates an updated publication record when a published session is republished after edits", async () => {
-    const app = await setupApp();
+    const fakeDiscordService = {
+      sendChannelMessage: async () => ({ messageId: "channel-message-id" }),
+      sendDirectMessage: async () => ({ messageId: "participant-message-id" }),
+      editChannelMessage: async () => undefined,
+    };
+    const fakeDriveService = {
+      ensureSeminarFolder: async () => ({
+        folderId: "seminar-folder-id",
+        url: "https://drive.google.com/drive/folders/seminar-folder-id",
+      }),
+      ensureSessionFolder: async () => ({
+        folderId: "session-folder-id",
+        url: "https://drive.google.com/drive/folders/session-folder-id",
+      }),
+    };
+
+    const app = await setupApp({
+      discordService: fakeDiscordService,
+      driveService: fakeDriveService,
+    });
+    appInstances.add(app);
     const user = await createUser(db, "admin", "test-password");
 
     assert.ok(user);
@@ -203,6 +253,7 @@ describe("setupApp", () => {
         authorization: `Bearer ${sessionToken.access_token}`,
       },
       payload: {
+        session_id: session.id,
         name: "Seminar overview",
         url: "https://drive.google.com/file/d/overview",
         visibility: "shared",

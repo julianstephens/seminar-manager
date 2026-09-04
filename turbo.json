@@ -43,5 +43,21 @@
     "tsconfig.base.json",
     "tsconfig.build.json",
     "tsconfig.json"
+  ],
+  "globalEnv": [
+    "NODE_ENV",
+    "PORT",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_DB",
+    "DATABASE_URL",
+    "DISCORD_BOT_TOKEN",
+    "DISCORD_GUILD_ID",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REFRESH_TOKEN",
+    "GOOGLE_DRIVE_ROOT_FOLDER_ID",
+    "SESSION_SECRET",
+    "ADMIN_PASSWORD"
   ]
 }

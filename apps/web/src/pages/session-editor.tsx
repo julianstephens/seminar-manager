@@ -12,6 +12,7 @@ import {
   fetchSessionById,
   fetchSessionReadiness,
   participantQueryKeys,
+  prepareSessionDriveFolder,
   publicationRecordQueryKeys,
   publishSession,
   retryPublication,
@@ -23,6 +24,7 @@ import {
   updateSession,
 } from "@/api";
 import { Layout } from "@/components/layout";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import {
   AUTH_TOKEN_KEY,
   authFetch,
@@ -49,8 +51,19 @@ import {
 import { useForm, useSelector } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LuExternalLink, LuFileText, LuLink, LuPlus } from "react-icons/lu";
-import { useNavigate, useParams } from "react-router";
+import {
+  LuExternalLink,
+  LuFileText,
+  LuFolderPlus,
+  LuLink,
+  LuPlus,
+} from "react-icons/lu";
+import {
+  useBeforeUnload,
+  useBlocker,
+  useNavigate,
+  useParams,
+} from "react-router";
 import {
   AssignmentCreateSchema,
   ResourceCreateSchema,
@@ -81,7 +94,16 @@ const SessionEditorPage = () => {
 
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<
+    | { kind: "delete-resource"; id: string; name: string }
+    | { kind: "publish" | "republish" | "archive" }
+    | null
+  >(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [retryStatus, setRetryStatus] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const [isAddResourceOpen, setIsAddResourceOpen] = useState(false);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(
     null,
@@ -94,10 +116,15 @@ const SessionEditorPage = () => {
     string | null
   >(null);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "unsaved" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const persistedValuesRef = useRef<{
     title: string;
     date: string;
   } | null>(null);
+  const hydratedSessionIdRef = useRef<string | null>(null);
 
   const seminarQuery = useQuery({
     queryKey: seminarQueryKeys.detail(seminarId ?? ""),
@@ -149,13 +176,21 @@ const SessionEditorPage = () => {
 
   const retryPublicationMutation = useMutation({
     mutationFn: retryPublication,
-    onSuccess: async () => {
+    onMutate: () => setRetryStatus(null),
+    onSuccess: () => {
+      setRetryStatus({
+        kind: "success",
+        message: "Publication operation retried successfully.",
+      });
+    },
+    onError: (error: Error) => {
+      setRetryStatus({ kind: "error", message: error.message });
+    },
+    onSettled: async () => {
       await queryClient.invalidateQueries({
         queryKey: publicationRecordQueryKeys.list(sessionId ?? ""),
       });
-      setSubmitError(null);
     },
-    onError: (error: Error) => setSubmitError(error.message),
   });
 
   const form = useForm({
@@ -235,12 +270,17 @@ const SessionEditorPage = () => {
   });
 
   const draftMutation = useMutation({
+    scope: { id: `session-draft-${sessionId ?? "unknown"}` },
     mutationFn: (payload: { title: string; date: string }) =>
       saveSessionDraft(seminarId ?? "", sessionId ?? "", {
         ...payload,
         published_at: null,
       }),
-    onSuccess: async (response) => {
+    onMutate: () => {
+      setSaveStatus("saving");
+      setSaveError(null);
+    },
+    onSuccess: async (response, savedValues) => {
       await invalidateEditorQueries();
       form.setFieldValue("published", false);
       setSubmitError(null);
@@ -249,11 +289,34 @@ const SessionEditorPage = () => {
         title: response.data.title.trim(),
         date: toDateTimeInputValue(response.data.date),
       };
+      const currentValues = form.state.values;
+      setSaveStatus(
+        currentValues.title.trim() === savedValues.title &&
+          fromDateTimeInputValue(currentValues.date) === savedValues.date
+          ? "saved"
+          : "unsaved",
+      );
     },
     onError: (error: Error) => {
-      setSubmitError(error.message);
+      setSaveStatus("error");
+      setSaveError(error.message);
     },
   });
+
+  const saveCurrentDraft = () => {
+    const values = form.state.values;
+    const nextDate = fromDateTimeInputValue(values.date);
+    if (!nextDate) {
+      setSaveStatus("error");
+      setSaveError("Choose a valid scheduled date and time before saving.");
+      return;
+    }
+
+    draftMutation.mutate({
+      title: values.title.trim(),
+      date: nextDate,
+    });
+  };
 
   const resourceForm = useForm({
     defaultValues: {
@@ -332,6 +395,26 @@ const SessionEditorPage = () => {
     },
     onError: (error: Error) => {
       setResourceSubmitError(error.message);
+    },
+  });
+
+  const deleteResourceMutation = useMutation({
+    mutationFn: (resourceId: string) => deleteResource(resourceId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: resourceQueryKeys.list(sessionId ?? ""),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["session-readiness", sessionId ?? ""],
+        }),
+      ]);
+      setPendingConfirmation(null);
+      setSubmitError(null);
+    },
+    onError: (error: Error) => {
+      setPendingConfirmation(null);
+      setSubmitError(error.message);
     },
   });
 
@@ -517,19 +600,57 @@ const SessionEditorPage = () => {
       });
       form.setFieldValue("published", true);
       setSubmitError(null);
+      setPendingConfirmation(null);
     },
     onError: (error: Error) => {
+      setPendingConfirmation(null);
       setSubmitError(error.message);
     },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: () => archiveSession(sessionId ?? ""),
+    onSuccess: async () => {
+      await invalidateEditorQueries();
+      setPendingConfirmation(null);
+      setSubmitError(null);
+    },
+    onError: (error: Error) => {
+      setPendingConfirmation(null);
+      setSubmitError(error.message);
+    },
+  });
+
+  const prepareDriveMutation = useMutation({
+    mutationFn: async (payload: { title: string; date: string }) => {
+      await updateSession(seminarId ?? "", sessionId ?? "", payload);
+      return await prepareSessionDriveFolder(sessionId ?? "");
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: sessionQueryKeys.detail(seminarId ?? "", sessionId ?? ""),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: seminarQueryKeys.detail(seminarId ?? ""),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: publicationRecordQueryKeys.list(sessionId ?? ""),
+        }),
+      ]);
+      setSubmitError(null);
+    },
+    onError: (error: Error) => setSubmitError(error.message),
   });
 
   const isPublishingRef = useRef(false);
   isPublishingRef.current = publishMutation.isPending;
 
   useEffect(() => {
-    if (!session) {
+    if (!session || hydratedSessionIdRef.current === session.id) {
       return;
     }
+    hydratedSessionIdRef.current = session.id;
     form.setFieldValue("title", session.title);
     form.setFieldValue("date", toDateTimeInputValue(session.date));
     form.setFieldValue("published", Boolean(session.published_at));
@@ -537,6 +658,8 @@ const SessionEditorPage = () => {
       title: session.title.trim(),
       date: toDateTimeInputValue(session.date),
     };
+    setSaveStatus("saved");
+    setSaveError(null);
   }, [form, session]);
 
   useEffect(() => {
@@ -566,19 +689,60 @@ const SessionEditorPage = () => {
 
     const values = form.state.values;
     if (values.title.trim() === pv.title && values.date === pv.date) {
+      if (!draftMutation.isPending) {
+        setSaveStatus("saved");
+      }
       return;
+    }
+
+    if (!draftMutation.isPending && saveStatus !== "error") {
+      setSaveStatus("unsaved");
     }
 
     const nextDate = fromDateTimeInputValue(values.date);
     if (!nextDate) {
+      setSaveStatus("error");
+      setSaveError("Choose a valid scheduled date and time before saving.");
       return;
     }
 
-    void draftMutation.mutateAsync({
+    draftMutation.mutate({
       title: values.title.trim(),
       date: nextDate,
     });
   }, [debouncedAutoSaveKey, seminarId, sessionId]);
+
+  useEffect(() => {
+    const pv = persistedValuesRef.current;
+    if (!pv) return;
+
+    const values = form.state.values;
+    const hasChanges =
+      values.title.trim() !== pv.title || values.date !== pv.date;
+    if (hasChanges && saveStatus !== "saving" && saveStatus !== "error") {
+      setSaveStatus("unsaved");
+    }
+    if (hasChanges && saveStatus === "error") {
+      setSaveError(null);
+      setSaveStatus("unsaved");
+    }
+  }, [autoSaveKey]);
+
+  const hasUncommittedChanges =
+    saveStatus === "unsaved" ||
+    saveStatus === "saving" ||
+    saveStatus === "error";
+  const navigationBlocker = useBlocker(hasUncommittedChanges);
+
+  useBeforeUnload(
+    (event) => {
+      if (hasUncommittedChanges) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    },
+    { capture: true },
+  );
 
   const participantById = useMemo(() => {
     return new Map(participants.map(({ data }) => [data.id, data] as const));
@@ -607,6 +771,67 @@ const SessionEditorPage = () => {
     resourceForm.setFieldValue("url", resource.url);
     resourceForm.setFieldValue("visibility", resource.visibility);
     setIsAddResourceOpen(true);
+  };
+
+  const scrollToEditorSection = (sectionId: string) => {
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  };
+
+  const getReadinessAction = (issue: string) => {
+    if (issue.includes("session title")) {
+      return {
+        label: "Add title",
+        run: () => {
+          scrollToEditorSection("session-details");
+          window.setTimeout(() => {
+            document.getElementById("session-title")?.focus();
+          }, 350);
+        },
+      };
+    }
+
+    if (issue.includes("Discord channel")) {
+      return {
+        label: "View seminar",
+        run: () => navigate(`/seminars/${seminarId}`),
+      };
+    }
+
+    if (issue.includes("assignment is required")) {
+      return resources.length === 0
+        ? { label: "Add resource", run: openCreateResourceDialog }
+        : {
+            label: "Add assignment",
+            run: () => setIsAddAssignmentOpen(true),
+          };
+    }
+
+    if (issue.startsWith("Resource")) {
+      const resourceName = issue.match(/Resource “(.+)” needs a URL\./)?.[1];
+      const matchingResource = resources.find(
+        ({ data: resource }) => resource.name === resourceName,
+      )?.data;
+
+      if (matchingResource) {
+        return {
+          label: "Add URL",
+          run: () => openEditResourceDialog(matchingResource),
+        };
+      }
+
+      return {
+        label: "Review resources",
+        run: () => scrollToEditorSection("session-resources"),
+      };
+    }
+
+    return {
+      label: "Review assignments",
+      run: () => scrollToEditorSection("session-assignments"),
+    };
   };
 
   const handleLogout = async () => {
@@ -680,9 +905,36 @@ const SessionEditorPage = () => {
           <Alert.Content>
             <Alert.Title>Unable to load session editor</Alert.Title>
             <Alert.Description>
-              {sessionQuery.error instanceof Error
-                ? sessionQuery.error.message
-                : "The requested session could not be loaded."}
+              <Stack gap={3} align="flex-start">
+                <Text>
+                  {sessionQuery.error instanceof Error
+                    ? sessionQuery.error.message
+                    : seminarQuery.error instanceof Error
+                      ? seminarQuery.error.message
+                      : "The requested session could not be loaded."}
+                </Text>
+                <Flex gap={2} wrap="wrap">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void Promise.all([
+                        seminarQuery.refetch(),
+                        sessionQuery.refetch(),
+                      ]);
+                    }}
+                  >
+                    Try again
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => navigate(`/seminars/${seminarId}`)}
+                  >
+                    Back to seminar
+                  </Button>
+                </Flex>
+              </Stack>
             </Alert.Description>
           </Alert.Content>
         </Alert.Root>
@@ -693,7 +945,9 @@ const SessionEditorPage = () => {
   const isAnySavePending =
     saveMutation.isPending ||
     draftMutation.isPending ||
-    publishMutation.isPending;
+    prepareDriveMutation.isPending ||
+    publishMutation.isPending ||
+    archiveMutation.isPending;
 
   return (
     <Layout onLogout={handleLogout} isLoggingOut={isLoggingOut}>
@@ -701,22 +955,23 @@ const SessionEditorPage = () => {
         <Stack gap={6}>
           <Flex justify="space-between" align="flex-start" gap={4} wrap="wrap">
             <Stack gap={2}>
-              <Flex
+              <Button
+                variant="plain"
                 fontSize="xs"
                 letterSpacing="0.16em"
                 textTransform="uppercase"
                 color="var(--accent-soft)"
                 fontWeight="700"
-                align="center"
+                alignItems="center"
                 gap={2}
-                cursor="pointer"
                 _hover={{ opacity: 0.8 }}
                 onClick={() => navigate(`/seminars/${seminarId}`)}
+                aria-label={`Back to ${seminar.name} sessions`}
               >
                 <Text>{seminar.name}</Text>
                 <Text>/</Text>
                 <Text>Sessions</Text>
-              </Flex>
+              </Button>
               <Heading as="h1" size="3xl" fontWeight="700" lineHeight="1.1">
                 Session {String(session.session_number).padStart(2, "0")}
               </Heading>
@@ -749,6 +1004,38 @@ const SessionEditorPage = () => {
             </Alert.Root>
           ) : null}
 
+          {saveStatus === "error" ? (
+            <Alert.Root
+              status="error"
+              bg="red.950"
+              borderColor="red.500"
+              color="red.100"
+            >
+              <Alert.Indicator />
+              <Alert.Content>
+                <Alert.Title>Changes not saved</Alert.Title>
+                <Alert.Description>
+                  <Flex
+                    align={{ base: "flex-start", sm: "center" }}
+                    justify="space-between"
+                    direction={{ base: "column", sm: "row" }}
+                    gap={3}
+                  >
+                    <Text>{saveError ?? "The draft could not be saved."}</Text>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      flexShrink={0}
+                      onClick={saveCurrentDraft}
+                    >
+                      Retry save
+                    </Button>
+                  </Flex>
+                </Alert.Description>
+              </Alert.Content>
+            </Alert.Root>
+          ) : null}
+
           <Flex
             align="flex-start"
             gap={6}
@@ -756,6 +1043,7 @@ const SessionEditorPage = () => {
           >
             <Stack flex="1" minW="0" gap={5}>
               <Box
+                id="session-details"
                 className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
@@ -772,6 +1060,8 @@ const SessionEditorPage = () => {
                     <form.Field name="title">
                       {(field) => (
                         <Input
+                          id="session-title"
+                          aria-label="Session title"
                           value={field.state.value}
                           onChange={(event) =>
                             field.handleChange(event.target.value)
@@ -795,6 +1085,7 @@ const SessionEditorPage = () => {
                       {(field) => (
                         <Input
                           type="datetime-local"
+                          aria-label="Scheduled date and time"
                           value={field.state.value}
                           onChange={(event) =>
                             field.handleChange(event.target.value)
@@ -820,7 +1111,7 @@ const SessionEditorPage = () => {
                     >
                       {session.status}
                     </Text>
-                    <Text color="gray.500" fontSize="xs" mt={1}>
+                    <Text color="gray.400" fontSize="xs" mt={1}>
                       Status is derived from readiness and publication activity.
                     </Text>
                   </Box>
@@ -828,6 +1119,7 @@ const SessionEditorPage = () => {
               </Box>
 
               <Box
+                id="session-resources"
                 className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
@@ -1163,16 +1455,11 @@ const SessionEditorPage = () => {
                             variant="ghost"
                             color="red.300"
                             onClick={() =>
-                              void deleteResource(resource.id).then(() =>
-                                Promise.all([
-                                  queryClient.invalidateQueries({
-                                    queryKey: resourceQueryKeys.list(sessionId),
-                                  }),
-                                  queryClient.invalidateQueries({
-                                    queryKey: ["session-readiness", sessionId],
-                                  }),
-                                ]),
-                              )
+                              setPendingConfirmation({
+                                kind: "delete-resource",
+                                id: resource.id,
+                                name: resource.name,
+                              })
                             }
                           >
                             Remove
@@ -1187,6 +1474,7 @@ const SessionEditorPage = () => {
 
             <Stack w={{ base: "100%", lg: "400px" }} gap={5}>
               <Box
+                id="session-assignments"
                 className="glass-panel"
                 borderRadius="xl"
                 border="1px solid"
@@ -1496,37 +1784,97 @@ const SessionEditorPage = () => {
                   Publishing
                 </Text>
 
-                {/* <form.Field name="published">
-                  {(field) => (
-                    <Checkbox.Root
-                      checked={field.state.value}
-                      onCheckedChange={(details) =>
-                        field.handleChange(Boolean(details.checked))
-                      }
-                    >
-                      <Checkbox.HiddenInput />
-                      <Checkbox.Control />
-                      <Checkbox.Label>Ready to publish</Checkbox.Label>
-                    </Checkbox.Root>
-                  )}
-                </form.Field> */}
-
-                <Stack gap={1} mt={3}>
-                  <Text
-                    color={
-                      readinessQuery.data?.ready ? "green.300" : "orange.300"
-                    }
-                    fontSize="sm"
-                  >
-                    {readinessQuery.data?.ready
-                      ? "Ready to publish"
-                      : "Not ready to publish"}
-                  </Text>
-                  {readinessQuery.data?.issues.map((issue) => (
-                    <Text key={issue} color="orange.200" fontSize="xs">
-                      {issue}
+                <Stack gap={3} mt={3}>
+                  {readinessQuery.isLoading ? (
+                    <Text color="gray.400" fontSize="sm">
+                      Checking publication requirements…
                     </Text>
-                  ))}
+                  ) : readinessQuery.isError ? (
+                    <Alert.Root status="error" variant="subtle">
+                      <Alert.Indicator />
+                      <Alert.Content>
+                        <Alert.Title>Readiness check unavailable</Alert.Title>
+                        <Alert.Description>
+                          <Stack gap={2} align="flex-start">
+                            <Text>
+                              Publishing is paused until the requirements can be
+                              checked.
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => void readinessQuery.refetch()}
+                            >
+                              Try again
+                            </Button>
+                          </Stack>
+                        </Alert.Description>
+                      </Alert.Content>
+                    </Alert.Root>
+                  ) : readinessQuery.data?.ready ? (
+                    <Box
+                      borderRadius="lg"
+                      border="1px solid"
+                      borderColor="green.700"
+                      bg="rgba(34, 197, 94, 0.08)"
+                      px={4}
+                      py={3}
+                    >
+                      <Text color="green.300" fontWeight="700">
+                        Ready to publish
+                      </Text>
+                      <Text color="gray.300" fontSize="sm" mt={1}>
+                        All required session details and assignments are in
+                        place.
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Stack gap={2}>
+                      <Box>
+                        <Text color="orange.300" fontWeight="700">
+                          {readinessQuery.data?.issues.length ?? 0} requirement
+                          {(readinessQuery.data?.issues.length ?? 0) === 1
+                            ? ""
+                            : "s"}{" "}
+                          remaining
+                        </Text>
+                        <Text color="gray.400" fontSize="sm" mt={1}>
+                          Complete each item below to enable publishing.
+                        </Text>
+                      </Box>
+                      {readinessQuery.data?.issues.map((issue) => {
+                        const action = getReadinessAction(issue);
+                        return (
+                          <Flex
+                            key={issue}
+                            align="center"
+                            justify="space-between"
+                            gap={3}
+                            borderRadius="md"
+                            border="1px solid"
+                            borderColor="orange.800"
+                            bg="rgba(251, 146, 60, 0.06)"
+                            px={3}
+                            py={2}
+                          >
+                            <Text color="orange.100" fontSize="sm">
+                              {issue}
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              flexShrink={0}
+                              borderColor="orange.700"
+                              color="orange.200"
+                              onClick={action.run}
+                            >
+                              {action.label}
+                            </Button>
+                          </Flex>
+                        );
+                      })}
+                    </Stack>
+                  )}
                   <Text color="gray.400" fontSize="sm">
                     Scheduled for:{" "}
                     {new Intl.DateTimeFormat("en-US", {
@@ -1565,6 +1913,24 @@ const SessionEditorPage = () => {
                   Publication Log
                 </Text>
 
+                {retryStatus ? (
+                  <Alert.Root
+                    status={retryStatus.kind}
+                    mb={3}
+                    bg={retryStatus.kind === "error" ? "red.950" : "green.950"}
+                    color={
+                      retryStatus.kind === "error" ? "red.100" : "green.100"
+                    }
+                  >
+                    <Alert.Indicator />
+                    <Alert.Content>
+                      <Alert.Description>
+                        {retryStatus.message}
+                      </Alert.Description>
+                    </Alert.Content>
+                  </Alert.Root>
+                ) : null}
+
                 <Stack gap={2}>
                   {publicationRecordsQuery.isLoading ? (
                     <Text color="gray.400">Loading publication records...</Text>
@@ -1597,11 +1963,10 @@ const SessionEditorPage = () => {
                           ) : null}
                         </Stack>
                         <Flex align="center" gap={2}>
-                          <Text color="gray.500" fontSize="xs">
+                          <Text color="gray.400" fontSize="xs">
                             {formatUtcTimestamp(record.created_at)}
                           </Text>
-                          {record.status === "failed" &&
-                          record.action !== "drive_setup" ? (
+                          {record.status === "failed" ? (
                             <Button
                               size="xs"
                               variant="outline"
@@ -1609,6 +1974,7 @@ const SessionEditorPage = () => {
                                 retryPublicationMutation.isPending &&
                                 retryPublicationMutation.variables === record.id
                               }
+                              disabled={retryPublicationMutation.isPending}
                               onClick={() =>
                                 retryPublicationMutation.mutate(record.id)
                               }
@@ -1647,14 +2013,75 @@ const SessionEditorPage = () => {
             gap={3}
             wrap="wrap"
           >
-            <Text color="gray.400" fontSize="sm">
-              {draftMutation.isPending
-                ? "Saving draft…"
-                : lastSavedAt !== null
-                  ? `Draft saved at ${lastSavedAt.toLocaleTimeString()}`
-                  : "Changes will be auto-saved."}
-            </Text>
-            <Flex gap={3}>
+            <Stack gap={0} role="status" aria-live="polite" aria-atomic="true">
+              <Text color="gray.400" fontSize="sm">
+                {saveStatus === "saving"
+                  ? "Saving changes…"
+                  : saveStatus === "unsaved"
+                    ? "Unsaved changes — autosave pending…"
+                    : saveStatus === "error"
+                      ? "Save failed — your changes are still in this browser."
+                      : lastSavedAt !== null
+                        ? `Saved at ${lastSavedAt.toLocaleTimeString()}`
+                        : "All changes saved."}
+              </Text>
+              {!readinessQuery.isLoading &&
+              readinessQuery.data?.ready === false ? (
+                <Text color="orange.300" fontSize="xs">
+                  Complete {readinessQuery.data.issues.length} publication
+                  requirement
+                  {readinessQuery.data.issues.length === 1 ? "" : "s"} above to
+                  enable Publish.
+                </Text>
+              ) : readinessQuery.isError ? (
+                <Text color="red.300" fontSize="xs">
+                  Publish is unavailable until readiness can be checked.
+                </Text>
+              ) : null}
+            </Stack>
+            <Flex gap={3} wrap="wrap">
+              {session.drive_folder_id ? (
+                <Link
+                  href={`https://drive.google.com/drive/folders/${session.drive_folder_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Button
+                    variant="outline"
+                    borderColor="whiteAlpha.300"
+                    color="white"
+                  >
+                    <LuExternalLink />
+                    Open Drive Folder
+                  </Button>
+                </Link>
+              ) : (
+                <Button
+                  variant="outline"
+                  borderColor="whiteAlpha.300"
+                  color="white"
+                  onClick={() => {
+                    const nextDate = fromDateTimeInputValue(
+                      form.state.values.date,
+                    );
+                    if (!nextDate) {
+                      setSubmitError(
+                        "Please choose a valid scheduled date and time.",
+                      );
+                      return;
+                    }
+                    void prepareDriveMutation.mutateAsync({
+                      title: form.state.values.title.trim(),
+                      date: nextDate,
+                    });
+                  }}
+                  disabled={isAnySavePending}
+                  loading={prepareDriveMutation.isPending}
+                >
+                  <LuFolderPlus />
+                  Prepare Drive Folder
+                </Button>
+              )}
               <Button
                 variant="outline"
                 borderColor="whiteAlpha.300"
@@ -1670,10 +2097,7 @@ const SessionEditorPage = () => {
                     return;
                   }
 
-                  void draftMutation.mutateAsync({
-                    title: form.state.values.title.trim(),
-                    date: nextDate,
-                  });
+                  saveCurrentDraft();
                 }}
                 disabled={isAnySavePending}
                 loading={draftMutation.isPending}
@@ -1695,9 +2119,8 @@ const SessionEditorPage = () => {
                     return;
                   }
 
-                  void publishMutation.mutateAsync({
-                    title: form.state.values.title.trim(),
-                    date: nextDate,
+                  setPendingConfirmation({
+                    kind: session.published_at ? "republish" : "publish",
                   });
                 }}
                 disabled={
@@ -1716,9 +2139,7 @@ const SessionEditorPage = () => {
                   color="white"
                   disabled={isAnySavePending}
                   onClick={() => {
-                    void archiveSession(sessionId).then(() =>
-                      invalidateEditorQueries(),
-                    );
+                    setPendingConfirmation({ kind: "archive" });
                   }}
                 >
                   Archive Session
@@ -1728,6 +2149,89 @@ const SessionEditorPage = () => {
           </Flex>
         </Box>
       </Box>
+
+      <ConfirmationDialog
+        open={pendingConfirmation !== null}
+        title={
+          pendingConfirmation?.kind === "delete-resource"
+            ? "Delete resource?"
+            : pendingConfirmation?.kind === "archive"
+              ? "Archive session?"
+              : pendingConfirmation?.kind === "republish"
+                ? "Republish session?"
+                : "Publish session?"
+        }
+        description={
+          pendingConfirmation?.kind === "delete-resource"
+            ? `“${pendingConfirmation.name}” and its participant assignments will be permanently deleted. This action cannot be undone.`
+            : pendingConfirmation?.kind === "archive"
+              ? "This session will be archived and an archive update may be sent to connected services."
+              : pendingConfirmation?.kind === "republish"
+                ? `This will update the published session in Google Drive and Discord for ${participants.length} participant${participants.length === 1 ? "" : "s"}.`
+                : `This will publish the session to Google Drive and Discord for ${participants.length} participant${participants.length === 1 ? "" : "s"}.`
+        }
+        confirmLabel={
+          pendingConfirmation?.kind === "delete-resource"
+            ? "Delete resource"
+            : pendingConfirmation?.kind === "archive"
+              ? "Archive session"
+              : pendingConfirmation?.kind === "republish"
+                ? "Republish session"
+                : "Publish session"
+        }
+        tone={
+          pendingConfirmation?.kind === "publish" ||
+          pendingConfirmation?.kind === "republish"
+            ? "primary"
+            : "danger"
+        }
+        isPending={
+          deleteResourceMutation.isPending ||
+          publishMutation.isPending ||
+          archiveMutation.isPending
+        }
+        onCancel={() => setPendingConfirmation(null)}
+        onConfirm={() => {
+          if (pendingConfirmation?.kind === "delete-resource") {
+            deleteResourceMutation.mutate(pendingConfirmation.id);
+            return;
+          }
+          if (pendingConfirmation?.kind === "archive") {
+            archiveMutation.mutate();
+            return;
+          }
+          if (
+            pendingConfirmation?.kind === "publish" ||
+            pendingConfirmation?.kind === "republish"
+          ) {
+            const nextDate = fromDateTimeInputValue(form.state.values.date);
+            if (!nextDate) {
+              setPendingConfirmation(null);
+              setSubmitError("Please choose a valid scheduled date and time.");
+              return;
+            }
+            publishMutation.mutate({
+              title: form.state.values.title.trim(),
+              date: nextDate,
+            });
+          }
+        }}
+      />
+
+      <ConfirmationDialog
+        open={navigationBlocker.state === "blocked"}
+        title="Leave with unsaved changes?"
+        description={
+          saveStatus === "saving"
+            ? "Your changes are still saving. Leaving now may discard them."
+            : saveStatus === "error"
+              ? "The latest changes could not be saved. Leaving now will discard them."
+              : "Your latest changes have not been saved yet. Leaving now will discard them."
+        }
+        confirmLabel="Leave without saving"
+        onCancel={() => navigationBlocker.reset?.()}
+        onConfirm={() => navigationBlocker.proceed?.()}
+      />
 
       {logoutError ? (
         <Alert.Root

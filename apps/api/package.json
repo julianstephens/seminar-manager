@@ -10,7 +10,7 @@
     "lint:fix": "oxlint --fix",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
-    "test": "TZ=UTC tsx --test src/**/*.test.ts src/**/**/*.test.ts",
+    "test": "NODE_ENV=test TZ=UTC tsx --test src/**/*.test.ts src/**/**/*.test.ts",
     "typecheck": "tsc"
   },
   "keywords": [],

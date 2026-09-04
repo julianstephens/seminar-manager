@@ -1,0 +1,30 @@
+{
+  "projectId": "bg2ejsepp6rciv7o6sr4fttx",
+  "destinationId": "ugsk8w0w0c0oc08wc4488s4w",
+  "serverId": "jk8w8scsg0gkw804ockg8g80",
+  "environmentName": "production",
+  "resources": [
+    {
+      "name": "seminar-manager-api",
+      "description": "The seminar-manager-api service.",
+      "dockerImageName": "ghcr.io/julianstephens/seminar-manager-api",
+      "envSecretName": "COOLIFY_ENV_API",
+      "portsExposes": "3000",
+      "healthCheck": {
+        "path": "/api/health",
+        "port": "3000"
+      }
+    },
+    {
+      "name": "seminar-manager-web",
+      "description": "The seminar-manager-web service.",
+      "dockerImageName": "ghcr.io/julianstephens/seminar-manager-web",
+      "envSecretName": "COOLIFY_ENV_WEB",
+      "portsExposes": "80",
+      "healthCheck": {
+        "path": "/",
+        "port": "80"
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import {
   updateSeminar,
 } from "@/api";
 import { Layout } from "@/components/layout";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import {
   AUTH_TOKEN_KEY,
   authFetch,
@@ -69,6 +70,10 @@ const SeminarDetailPage = () => {
   const [participantSubmitError, setParticipantSubmitError] = useState<
     string | null
   >(null);
+  const [participantToRemove, setParticipantToRemove] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
 
   const seminarQuery = useQuery({
     queryKey: seminarQueryKeys.detail(seminarId ?? ""),
@@ -230,6 +235,7 @@ const SeminarDetailPage = () => {
       void queryClient.invalidateQueries({
         queryKey: participantQueryKeys.list(seminarId ?? ""),
       });
+      setParticipantToRemove(null);
     },
     onError: (error: Error) => {
       setParticipantSubmitError(error.message);
@@ -667,9 +673,10 @@ const SeminarDetailPage = () => {
                           loading={removeParticipantMutation.isPending}
                           disabled={removeParticipantMutation.isPending}
                           onClick={() => {
-                            void removeParticipantMutation.mutateAsync(
-                              participant.id,
-                            );
+                            setParticipantToRemove({
+                              id: participant.id,
+                              name: participant.name,
+                            });
                           }}
                         >
                           <Icon as={LuTrash2} boxSize={3.5} />
@@ -993,6 +1000,20 @@ const SeminarDetailPage = () => {
           </Box>
         </Stack>
       </Box>
+
+      <ConfirmationDialog
+        open={participantToRemove !== null}
+        title="Remove participant?"
+        description={`${participantToRemove?.name ?? "This participant"} will be removed from this seminar. Their participant record will remain available for other seminars.`}
+        confirmLabel="Remove participant"
+        isPending={removeParticipantMutation.isPending}
+        onCancel={() => setParticipantToRemove(null)}
+        onConfirm={() => {
+          if (participantToRemove) {
+            removeParticipantMutation.mutate(participantToRemove.id);
+          }
+        }}
+      />
 
       {logoutError ? (
         <Alert.Root

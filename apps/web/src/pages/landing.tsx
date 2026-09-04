@@ -67,7 +67,15 @@ const LandingPage = () => {
   });
 
   return (
-    <Box className="auth-shell" minH="100vh" bg="black" color="white">
+    <Box
+      as="main"
+      id="main-content"
+      tabIndex={-1}
+      className="auth-shell"
+      minH="100vh"
+      bg="black"
+      color="white"
+    >
       <Container maxW="lg" py={{ base: 16, md: 24 }}>
         <Box
           className="auth-panel glass-panel"
@@ -102,9 +110,9 @@ const LandingPage = () => {
             >
               <Stack gap={4}>
                 <Box>
-                  <Text fontSize="sm" mb={2} color="gray.300">
+                  <label htmlFor="admin-password" className="field-label">
                     Password
-                  </Text>
+                  </label>
                   <form.Field
                     name="password"
                     validators={{
@@ -115,12 +123,20 @@ const LandingPage = () => {
                     {(field) => (
                       <>
                         <Input
+                          id="admin-password"
                           type="password"
                           value={field.state.value}
                           onChange={(event) =>
                             field.handleChange(event.target.value)
                           }
                           placeholder="Enter admin password"
+                          autoComplete="current-password"
+                          aria-invalid={field.state.meta.errors.length > 0}
+                          aria-describedby={
+                            field.state.meta.errors.length > 0
+                              ? "password-error"
+                              : undefined
+                          }
                           size="lg"
                           className="glass-field"
                           bg="transparent"
@@ -135,7 +151,13 @@ const LandingPage = () => {
                           }}
                         />
                         {field.state.meta.errors.length > 0 ? (
-                          <Text fontSize="sm" color="red.300" mt={2}>
+                          <Text
+                            id="password-error"
+                            role="alert"
+                            fontSize="sm"
+                            color="red.300"
+                            mt={2}
+                          >
                             {field.state.meta.errors.join(", ")}
                           </Text>
                         ) : null}

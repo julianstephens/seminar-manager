@@ -34,6 +34,8 @@ import {
   updateParticipantHandler,
   updateSeminarHandler,
 } from "@/handlers/seminar";
+import type { DiscordService } from "@/integrations/discord/discord-service";
+import type { DriveService } from "@/integrations/google-drive/drive-service";
 import {
   createParticipant,
   getAssignmentById,
@@ -46,10 +48,12 @@ import {
   updateSession,
 } from "@/repos";
 import { getAuthSession } from "@/repos/auth";
+import { getIntegrationStatus } from "@/services/integration-status";
 import {
   archiveSession,
   getReadiness,
   getSessionLifecycle,
+  prepareSessionDriveFolder,
   publishSession,
   retryPublication,
 } from "@/services/publication-service";
@@ -95,12 +99,15 @@ import { buildDbCleanerWorkerData } from "./db-cleaner";
 import { toRequestErrorResponse } from "./error-response";
 
 const registerWeeklyDbCleaner = (app: FastifyInstance) => {
+  let dbCleanerWorker: Worker | null = null;
+
   const dbCleanerTask = new AsyncTask(
     "weekly-db-cleaner",
     async () => {
       const worker = new Worker(new URL("./db-cleaner.ts", import.meta.url), {
         workerData: buildDbCleanerWorkerData(env.DATABASE_URL),
       });
+      dbCleanerWorker = worker;
 
       await new Promise<void>((resolve, reject) => {
         worker.once("error", reject);
@@ -133,9 +140,20 @@ const registerWeeklyDbCleaner = (app: FastifyInstance) => {
   );
 
   app.scheduler.addCronJob(weeklyDbCleanerJob);
+
+  app.addHook("onClose", async () => {
+    if (dbCleanerWorker) {
+      await dbCleanerWorker.terminate();
+      dbCleanerWorker = null;
+    }
+    app.scheduler.stop();
+  });
 };
 
-export const setupApp = async (): Promise<FastifyInstance> => {
+export const setupApp = async (options?: {
+  discordService?: DiscordService;
+  driveService?: DriveService;
+}): Promise<FastifyInstance> => {
   const app = Fastify({
     logger: true,
   });
@@ -145,29 +163,54 @@ export const setupApp = async (): Promise<FastifyInstance> => {
 
   await app.register(fastifySchedule);
 
-  await app.register(fastifySwagger, {
-    openapi: {
-      info: {
-        title: "Seminar Manager API",
-        description: "REST API for managing seminars and their resources",
-        version: "1.0.0",
-      },
-      servers: [],
-    },
-    transform: jsonSchemaTransform,
-    transformObject: jsonSchemaTransformObject,
+  app.addHook("onSend", async (request, reply) => {
+    reply.header(
+      "Content-Security-Policy",
+      env.NODE_ENV !== "production" && request.url.startsWith("/docs")
+        ? "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+        : "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    );
+    reply.header(
+      "Permissions-Policy",
+      "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+    );
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    if (request.url.startsWith("/api/")) {
+      reply.header("Cache-Control", "no-store");
+    }
   });
 
-  await app.register(fastifySwaggerUI, {
-    routePrefix: "/docs",
-  });
+  if (env.NODE_ENV !== "production") {
+    await app.register(fastifySwagger, {
+      openapi: {
+        info: {
+          title: "Seminar Manager API",
+          description: "REST API for managing seminars and their resources",
+          version: "1.0.0",
+        },
+        servers: [],
+      },
+      transform: jsonSchemaTransform,
+      transformObject: jsonSchemaTransformObject,
+    });
+
+    await app.register(fastifySwaggerUI, {
+      routePrefix: "/docs",
+    });
+  }
 
   app.addHook("preHandler", async (request) => {
     const requestPath = request.url.split("?")[0];
-    const publicRoutes = ["/api/auth/login", "/api/auth/logout"];
+    const publicRoutes = new Set([
+      "POST /api/auth/login",
+      "POST /api/auth/logout",
+      "GET /api/health",
+    ]);
     const isPublicRequest =
-      (publicRoutes.includes(requestPath) && request.method === "POST") ||
-      requestPath.startsWith("/docs");
+      publicRoutes.has(`${request.method} ${requestPath}`) ||
+      (env.NODE_ENV !== "production" && requestPath.startsWith("/docs"));
 
     if (isPublicRequest) {
       return;
@@ -233,6 +276,18 @@ export const setupApp = async (): Promise<FastifyInstance> => {
   const typedApp = app.withTypeProvider<ZodTypeProvider>();
 
   typedApp.route({
+    method: "GET",
+    url: "/api/health",
+    schema: {
+      tags: ["health"],
+      response: {
+        200: z.object({ status: z.literal("ok") }),
+      },
+    },
+    handler: async () => ({ status: "ok" as const }),
+  });
+
+  typedApp.route({
     method: "POST",
     url: "/api/auth/login",
     schema: {
@@ -248,6 +303,34 @@ export const setupApp = async (): Promise<FastifyInstance> => {
     handler: async (request, _reply) => {
       return await loginHandler(request.body);
     },
+  });
+
+  const IntegrationStatusSchema = z.object({
+    checked_at: z.iso.datetime(),
+    discord: z.object({
+      status: z.enum(["connected", "error", "not_configured"]),
+      label: z.string().optional(),
+      message: z.string(),
+    }),
+    google_drive: z.object({
+      status: z.enum(["connected", "error", "not_configured"]),
+      label: z.string().optional(),
+      message: z.string(),
+    }),
+  });
+
+  typedApp.route({
+    method: "GET",
+    url: "/api/integrations/status",
+    schema: {
+      tags: ["integrations"],
+      response: {
+        200: IntegrationStatusSchema,
+        401: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async () => await getIntegrationStatus(),
   });
 
   typedApp.route({
@@ -748,6 +831,35 @@ export const setupApp = async (): Promise<FastifyInstance> => {
     }),
   });
 
+  const DrivePreparationResultSchema = z.object({
+    session_id: z.uuid(),
+    folder_id: z.string().min(1),
+    folder_url: z.url(),
+  });
+
+  // POST /api/sessions/:id/prepare-drive
+  typedApp.route({
+    method: "POST",
+    url: "/api/sessions/:id/prepare-drive",
+    schema: {
+      tags: ["sessions"],
+      params: z.object({ id: z.uuid() }),
+      response: {
+        200: DrivePreparationResultSchema,
+        401: ApiErrorResponseSchema,
+        404: ApiErrorResponseSchema,
+        500: ApiErrorResponseSchema,
+      },
+    },
+    handler: async (request, _reply) => {
+      return await prepareSessionDriveFolder(
+        db,
+        request.params.id,
+        options?.driveService,
+      );
+    },
+  });
+
   // POST /api/sessions/:id/publish
   typedApp.route({
     method: "POST",
@@ -764,7 +876,12 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       },
     },
     handler: async (request, _reply) => {
-      return await publishSession(db, request.params.id);
+      return await publishSession(
+        db,
+        request.params.id,
+        options?.discordService,
+        options?.driveService,
+      );
     },
   });
 
@@ -783,7 +900,12 @@ export const setupApp = async (): Promise<FastifyInstance> => {
       },
     },
     handler: async (request, _reply) => {
-      return await archiveSession(db, request.params.id);
+      return await archiveSession(
+        db,
+        request.params.id,
+        options?.discordService,
+        options?.driveService,
+      );
     },
   });
 

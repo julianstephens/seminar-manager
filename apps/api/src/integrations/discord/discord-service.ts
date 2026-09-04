@@ -40,6 +40,13 @@ export class DiscordJsService implements DiscordService {
     this.rest = rest ?? new REST({ version: "10" }).setToken(token);
   }
 
+  async checkConnection(): Promise<{ label: string }> {
+    const guild = (await this.rest.get(Routes.guild(this.guildId))) as {
+      name?: string;
+    };
+    return { label: guild.name?.trim() || `Guild ${this.guildId}` };
+  }
+
   private async assertGuildChannel(channelId: string): Promise<void> {
     const channel = (await this.rest.get(Routes.channel(channelId))) as {
       guild_id?: string;

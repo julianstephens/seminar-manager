@@ -10,6 +10,10 @@ const envSchema = z.object({
   DATABASE_URL: z.url(),
   DISCORD_BOT_TOKEN: z.string(),
   DISCORD_GUILD_ID: z.string(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REFRESH_TOKEN: z.string().optional(),
+  GOOGLE_DRIVE_ROOT_FOLDER_ID: z.string().optional(),
   SESSION_SECRET: z.string(),
   ADMIN_PASSWORD: z.string().min(1),
 });
