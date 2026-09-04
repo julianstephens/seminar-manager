@@ -35,6 +35,7 @@ COPY tsconfig.base.json ./
 COPY apps/web apps/web
 COPY packages/schemas packages/schemas
 
+RUN pnpm --filter schemas build
 RUN pnpm --filter web build
 
 FROM nginx:alpine AS runner
