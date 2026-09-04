@@ -10,6 +10,7 @@
       "dockerImageName": "ghcr.io/julianstephens/seminar-manager-api",
       "envSecretName": "COOLIFY_ENV_API",
       "portsExposes": "3000",
+      "domains": "http://seminar-api.cyborgdev.cloud",
       "healthCheck": {
         "path": "/api/health",
         "port": "3000"
