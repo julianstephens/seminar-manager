@@ -26,6 +26,8 @@ COPY apps/api apps/api
 COPY packages/db packages/db
 COPY packages/schemas packages/schemas
 
+RUN pnpm --filter db build
+RUN pnpm --filter schemas build
 RUN pnpm --filter api build
 RUN pnpm --filter api deploy --prod --legacy /prod/api
 

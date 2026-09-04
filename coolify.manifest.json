@@ -21,6 +21,7 @@
       "dockerImageName": "ghcr.io/julianstephens/seminar-manager-web",
       "envSecretName": "COOLIFY_ENV_WEB",
       "portsExposes": "80",
+      "domains": "http://seminar.cyborgdev.cloud",
       "healthCheck": {
         "path": "/",
         "port": "80"
