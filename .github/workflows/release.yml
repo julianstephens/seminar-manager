@@ -24,11 +24,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get previous release tag
+        id: previous-tag
+        shell: bash
+        run: |
+          PREVIOUS_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | awk 'NR==2 {print; exit}')
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "tag=HEAD^" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check for changes
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ steps.previous-tag.outputs.tag }}
+          ref: ${{ github.sha }}
           filters: |
             api:
               - 'apps/api/**'
