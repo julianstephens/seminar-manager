@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const apiProxyTarget =
-    process.env.VITE_API_PROXY_TARGET ||
+    process.env.VITE_PROXY_TARGET ||
     (mode === "production" ? "http://api:3000" : "http://localhost:3000");
 
   return {

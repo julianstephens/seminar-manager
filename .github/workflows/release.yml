@@ -125,7 +125,7 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:cache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:cache,mode=max
           build-args: |
-            ${{ matrix.service == 'web' && format('VITE_PROXY_TARGET={0}',  secrets.VITE_PROXY_TARGET) || '' }}
+            ${{ matrix.service == 'web' && format('VITE_PROXY_TARGET={0}', secrets.VITE_PROXY_TARGET) || '' }}
 
   deploy:
     name: Deploy to Coolify
