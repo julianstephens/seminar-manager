@@ -39,7 +39,8 @@ jobs:
               - '.github/workflows/release.yml'
             web:
               - 'apps/web/**'
-              - 'packages/utils/**'
+              - 'packages/db/**'
+              - 'packages/schemas/**'
               - 'pnpm-lock.yaml'
               - 'package.json'
               - '.github/workflows/release.yml'
