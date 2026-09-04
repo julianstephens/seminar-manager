@@ -8,6 +8,7 @@ import {
   createSeminarParticipant,
   createSession,
   getPublicationRecordsBySession,
+  getSessionById,
 } from "@/repos";
 import { createAuthSession, createUser } from "@/repos/auth";
 
@@ -109,7 +110,7 @@ describe("setupApp", () => {
       seminar_id: seminar.id,
       session_number: 1,
       title: "Session 01",
-      date: new Date("2024-01-01T10:00:00.000Z"),
+      date: new Date("2030-01-01T10:00:00.000Z"),
     });
 
     assert.ok(session);
@@ -266,10 +267,12 @@ describe("setupApp", () => {
       url: `/api/sessions/${session.id}/publish`,
       headers: {
         authorization: `Bearer ${sessionToken.access_token}`,
+        "content-type": "application/json",
       },
+      payload: { message_appendix: "Bring your notes." },
     });
 
-    assert.equal(initialPublish.statusCode, 200);
+    assert.equal(initialPublish.statusCode, 200, initialPublish.body);
 
     await app.inject({
       method: "PATCH",
@@ -280,7 +283,7 @@ describe("setupApp", () => {
       },
       payload: {
         title: "Session 01 Updated",
-        date: "2024-01-02T11:30:00.000Z",
+        date: "2030-01-02T11:30:00.000Z",
         published_at: null,
       },
     });
@@ -294,10 +297,53 @@ describe("setupApp", () => {
     });
 
     assert.equal(republish.statusCode, 200);
+    assert.equal(
+      (await getSessionById(db, session.id))?.channel_message_appendix,
+      "Bring your notes.",
+    );
 
     const records = await getPublicationRecordsBySession(db, session.id);
     assert.equal(records.length, 4);
-    assert.equal(records[0]?.action, "channel_message");
-    assert.equal(records[0]?.status, "success");
+    assert.equal(
+      records.filter(({ action }) => action === "channel_message").length,
+      2,
+    );
+    assert.ok(records.every(({ status }) => status === "success"));
+
+    const selectiveRepublish = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/publish`,
+      headers: {
+        authorization: `Bearer ${sessionToken.access_token}`,
+        "content-type": "application/json",
+      },
+      payload: {
+        notifications: {
+          channel_message: false,
+          participant_dms: false,
+        },
+      },
+    });
+
+    assert.equal(selectiveRepublish.statusCode, 200);
+    assert.deepEqual(JSON.parse(selectiveRepublish.body).results, {
+      drive: "success",
+      participant_dms: [],
+    });
+
+    const selectiveRecords = await getPublicationRecordsBySession(
+      db,
+      session.id,
+    );
+    assert.equal(selectiveRecords.length, 5);
+    assert.equal(
+      selectiveRecords.filter(({ action }) => action === "drive_setup").length,
+      3,
+    );
+    assert.equal(
+      selectiveRecords.filter(({ action }) => action === "channel_message")
+        .length,
+      2,
+    );
   });
 });

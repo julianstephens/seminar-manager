@@ -47,6 +47,11 @@ export type DrivePreparationResult = {
   folder_url: string;
 };
 
+export type PublishNotificationOptions = {
+  channelMessage?: boolean;
+  participantDms?: boolean;
+};
+
 type SessionDetails = Awaited<ReturnType<typeof getSessionById>> & {};
 type SeminarDetails = NonNullable<Awaited<ReturnType<typeof getSeminarById>>>;
 type ResourceDetails = Awaited<
@@ -93,11 +98,13 @@ export const formatDirectMessage = (
   seminar: SeminarDetails,
   session: NonNullable<SessionDetails>,
   resources: ResourceDetails[],
+  sessionFolderUrl?: string | null,
 ): { content: string } => ({
   content: [
-    `**${seminar.name} — Session ${session.session_number}**`,
+    `**${seminar.name} — ${session.title}**`,
     "Your reading for this session is:",
     ...resources.map(({ name, url }) => `**${name}**\n[Open reading](${url})`),
+    ...(sessionFolderUrl ? [`[Session folder](${sessionFolderUrl})`] : []),
   ].join("\n\n"),
 });
 
@@ -106,7 +113,7 @@ export const formatArchiveMessage = (
   session: NonNullable<SessionDetails>,
 ): { content: string } => ({
   content: [
-    `**${seminar.name} — Session ${session.session_number}**`,
+    `**${seminar.name} — ${session.session_number}**`,
     "Session materials and resources are now archived here:",
     session.drive_folder_id
       ? `[Session archive](https://drive.google.com/drive/folders/${session.drive_folder_id})`
@@ -315,6 +322,7 @@ export const publishSession = async (
   discordService: DiscordService = discord,
   driveService: DriveService = drive,
   messageAppendix?: string,
+  notifications: PublishNotificationOptions = {},
 ): Promise<PublicationResult> => {
   const session = await getSessionById(db, sessionId);
   if (!session) throw new ApiError(404, "Session not found");
@@ -340,92 +348,117 @@ export const publishSession = async (
     driveResult.externalId,
     driveResult.error,
   );
-  const priorChannelMessage = await db
-    .selectFrom("publication_record")
-    .selectAll()
-    .where("session_id", "=", session.id)
-    .where("action", "=", "channel_message")
-    .where("status", "=", "success")
-    .where("external_id", "is not", null)
-    .orderBy("created_at", "desc")
-    .executeTakeFirst();
-  const channel = await runDiscordOperation(async () => {
-    const message = formatChannelMessage(
-      seminar,
-      session,
-      resources,
-      driveResult.folderUrl,
-      messageAppendix,
-    );
-    if (priorChannelMessage?.external_id) {
-      await discordService.editChannelMessage(
+  const sendChannelMessage = notifications.channelMessage ?? true;
+  const sendParticipantDms = notifications.participantDms ?? true;
+  const effectiveMessageAppendix =
+    messageAppendix === undefined
+      ? (session.channel_message_appendix ?? undefined)
+      : messageAppendix;
+  let channel: Awaited<ReturnType<typeof runDiscordOperation>> | undefined;
+  if (sendChannelMessage) {
+    const priorChannelMessage = await db
+      .selectFrom("publication_record")
+      .selectAll()
+      .where("session_id", "=", session.id)
+      .where("action", "=", "channel_message")
+      .where("status", "=", "success")
+      .where("external_id", "is not", null)
+      .orderBy("created_at", "desc")
+      .executeTakeFirst();
+    channel = await runDiscordOperation(async () => {
+      const message = formatChannelMessage(
+        seminar,
+        session,
+        resources,
+        driveResult.folderUrl,
+        effectiveMessageAppendix,
+      );
+      if (priorChannelMessage?.external_id) {
+        await discordService.editChannelMessage(
+          seminar.discord_channel_id,
+          priorChannelMessage.external_id,
+          message,
+        );
+        return { messageId: priorChannelMessage.external_id };
+      }
+      return await discordService.sendChannelMessage(
         seminar.discord_channel_id,
-        priorChannelMessage.external_id,
         message,
       );
-      return { messageId: priorChannelMessage.external_id };
-    }
-    return await discordService.sendChannelMessage(
-      seminar.discord_channel_id,
-      message,
+    });
+    await record(
+      db,
+      session.id,
+      "channel_message",
+      channel.status,
+      null,
+      channel.externalId,
+      channel.error,
     );
-  });
-  await record(
-    db,
-    session.id,
-    "channel_message",
-    channel.status,
-    null,
-    channel.externalId,
-    channel.error,
-  );
+  }
 
   const assignments = await getAssignmentsBySession(db, session.id);
   const participantIds = [
     ...new Set(assignments.map(({ participant_id }) => participant_id)),
   ];
-  const participant_dms = await Promise.all(
-    participantIds.map(async (participant_id) => {
-      const participant = await getParticipantById(db, participant_id);
-      const assignedResourceIds = assignments
-        .filter((assignment) => assignment.participant_id === participant_id)
-        .map((assignment) => assignment.resource_id);
-      const assignedResources = resources.filter((resource) =>
-        assignedResourceIds.includes(resource.id),
-      );
-      const dm = participant
-        ? await runDiscordOperation(() =>
-            discordService.sendDirectMessage(
-              participant.discord_user_id,
-              formatDirectMessage(seminar, session, assignedResources),
-            ),
-          )
-        : {
-            status: "failed" as const,
-            externalId: null,
-            error: "Participant not found",
-          };
-      await record(
-        db,
-        session.id,
-        "participant_dm",
-        dm.status,
-        participant_id,
-        dm.externalId,
-        dm.error,
-      );
-      return { participant_id, status: dm.status };
-    }),
-  );
+  const participant_dms = sendParticipantDms
+    ? await Promise.all(
+        participantIds.map(async (participant_id) => {
+          const participant = await getParticipantById(db, participant_id);
+          const assignedResourceIds = assignments
+            .filter(
+              (assignment) => assignment.participant_id === participant_id,
+            )
+            .map((assignment) => assignment.resource_id);
+          const assignedResources = resources.filter((resource) =>
+            assignedResourceIds.includes(resource.id),
+          );
+          const dm = participant
+            ? await runDiscordOperation(() =>
+                discordService.sendDirectMessage(
+                  participant.discord_user_id,
+                  formatDirectMessage(
+                    seminar,
+                    session,
+                    assignedResources,
+                    driveResult.folderUrl,
+                  ),
+                ),
+              )
+            : {
+                status: "failed" as const,
+                externalId: null,
+                error: "Participant not found",
+              };
+          await record(
+            db,
+            session.id,
+            "participant_dm",
+            dm.status,
+            participant_id,
+            dm.externalId,
+            dm.error,
+          );
+          return { participant_id, status: dm.status };
+        }),
+      )
+    : [];
 
-  await updateSession(db, session.id, { published_at: new Date() });
+  await updateSession(db, session.id, {
+    published_at: new Date(),
+    ...(channel?.status === "success"
+      ? {
+          channel_message_appendix: effectiveMessageAppendix?.trim() || null,
+        }
+      : {}),
+  });
   return {
     session_id: session.id,
     status: "published",
     readiness,
     results: {
       drive: driveResult.status,
-      channel_message: channel.status,
+      channel_message: channel?.status,
       participant_dms,
     },
   };
@@ -547,6 +580,9 @@ export const retryPublication = async (
           seminar,
           session,
           resources.filter(({ id }) => assignedIds.includes(id)),
+          seminar.drive_folder_id
+            ? `https://drive.google.com/drive/folders/${seminar.drive_folder_id}`
+            : null,
         ),
       ),
     );

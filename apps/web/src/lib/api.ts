@@ -1,4 +1,4 @@
-import { authFetch, readApiErrorMessage } from "@/utils";
+import { authFetch, readApiErrorMessage } from "@/lib/utils";
 import type {
   AssignmentCreate,
   AssignmentResponse,
@@ -516,7 +516,13 @@ export const prepareSessionDriveFolder = async (
 export const publishSession = async (
   _seminarId: string,
   sessionId: string,
-  payload: { message_appendix?: string },
+  payload: {
+    message_appendix?: string;
+    notifications?: {
+      channel_message?: boolean;
+      participant_dms?: boolean;
+    };
+  },
 ): Promise<PublicationResult> => {
   const response = await authFetch(`/api/sessions/${sessionId}/publish`, {
     method: "POST",

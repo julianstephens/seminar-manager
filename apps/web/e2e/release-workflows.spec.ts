@@ -55,7 +55,10 @@ const mockDashboard = async (page: Page, seminars = [{ data: seminar }]) => {
 
 const mockSessionEditor = async (
   page: Page,
-  options: { failAutosave?: boolean; onPublish?: () => void } = {},
+  options: {
+    failAutosave?: boolean;
+    onPublish?: (payload: unknown) => void;
+  } = {},
 ) => {
   let publishedAt: string | null = session.published_at;
 
@@ -109,7 +112,7 @@ const mockSessionEditor = async (
     }
     if (url.pathname === "/api/publication-records") return json(route, []);
     if (url.pathname === `/api/sessions/${sessionId}/publish`) {
-      options.onPublish?.();
+      options.onPublish?.(request.postDataJSON());
       publishedAt = now;
       return json(route, {
         session_id: sessionId,
@@ -175,6 +178,54 @@ test("requires confirmation before deleting a seminar", async ({ page }) => {
   await expect(page.getByRole("alertdialog")).toBeHidden();
 });
 
+test("edits all seminar details together", async ({ page }) => {
+  await authenticate(page);
+  let savedPayload: Record<string, unknown> | undefined;
+
+  await page.route("**/api/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+
+    if (url.pathname === `/api/seminars/${seminarId}`) {
+      if (request.method() === "PATCH") {
+        savedPayload = request.postDataJSON() as Record<string, unknown>;
+        return json(route, { data: { ...seminar, ...savedPayload } });
+      }
+      return json(route, { data: seminar });
+    }
+    if (url.pathname === `/api/seminars/${seminarId}/participants`) {
+      return json(route, []);
+    }
+    if (url.pathname === `/api/seminars/${seminarId}/sessions`) {
+      return json(route, []);
+    }
+    if (url.pathname === "/api/participants") return json(route, []);
+    return json(route, {});
+  });
+
+  await page.goto(`/seminars/${seminarId}`);
+  await page.getByRole("button", { name: "Edit seminar" }).click();
+  await page.getByLabel("Seminar name").fill("Applied Ethics");
+  await page.getByLabel("Description").fill("");
+  await page.getByLabel("Discord channel ID").fill("987654321");
+  await page.getByLabel("Google Drive folder ID").fill("drive-folder-42");
+  await page.getByRole("button", { name: "Save all details" }).click();
+
+  await expect
+    .poll(() => savedPayload)
+    .toEqual({
+      name: "Applied Ethics",
+      description: null,
+      discord_channel_id: "987654321",
+      drive_folder_id: "drive-folder-42",
+    });
+  await expect(
+    page.getByRole("heading", { name: "Applied Ethics" }),
+  ).toBeVisible();
+  await expect(page.getByText("No description provided.")).toBeVisible();
+  await expect(page.getByText("Discord channel: 987654321")).toBeVisible();
+});
+
 test("shows autosave failure and retry recovery", async ({ page }) => {
   await authenticate(page);
   await mockSessionEditor(page, { failAutosave: true });
@@ -195,7 +246,7 @@ test("confirms and publishes a ready session", async ({ page }) => {
 
   await page.getByRole("button", { name: "Publish Session" }).click();
   await expect(page.getByRole("alertdialog")).toContainText(
-    "This will publish the session",
+    "Choose which notifications to send now",
   );
   await page.getByRole("button", { name: "Publish session" }).click();
   await expect.poll(() => published).toBe(true);
@@ -205,4 +256,27 @@ test("confirms and publishes a ready session", async ({ page }) => {
       .filter({ hasText: "Unable to load session editor" }),
   ).toHaveCount(0);
   await expect(page.getByText("Published:")).toBeVisible();
+});
+
+test("publishes only the selected notifications", async ({ page }) => {
+  let publishPayload: unknown;
+  await authenticate(page);
+  await mockSessionEditor(page, {
+    onPublish: (payload) => (publishPayload = payload),
+  });
+  await page.goto(`/seminars/${seminarId}/sessions/${sessionId}`);
+
+  await page.getByRole("button", { name: "Publish Session" }).click();
+  await page.getByLabel("Individual assignment messages").uncheck();
+  await page.getByRole("button", { name: "Publish session" }).click();
+
+  await expect
+    .poll(() => publishPayload)
+    .toEqual({
+      message_appendix: "",
+      notifications: {
+        channel_message: true,
+        participant_dms: false,
+      },
+    });
 });

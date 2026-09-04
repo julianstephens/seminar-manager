@@ -33,6 +33,7 @@ export interface SessionTable {
   title: string;
   date: Date;
   drive_folder_id: string | null;
+  channel_message_appendix: string | null;
   published_at: Date | null;
   archived_at: Date | null;
   created_at: Generated<Date>;

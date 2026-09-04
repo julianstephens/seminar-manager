@@ -29,6 +29,7 @@ type GoogleDriveServiceOptions = {
 
 type DriveFile = {
   id: string;
+  name?: string;
   mimeType?: string;
   trashed?: boolean;
   parents?: string[];
@@ -128,9 +129,13 @@ export class GoogleDriveService implements DriveService {
     };
   }
 
-  private async verifyFolder(folderId: string, parentId?: string) {
+  private async verifyFolder(
+    folderId: string,
+    expectedName?: string,
+    parentId?: string,
+  ) {
     const file = await this.driveRequest<DriveFile>(
-      `/files/${encodeURIComponent(folderId)}?fields=id,mimeType,trashed,parents&supportsAllDrives=true`,
+      `/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,parents&supportsAllDrives=true`,
     );
     if (file.trashed || file.mimeType !== FOLDER_MIME_TYPE) {
       throw new Error(`Google Drive item ${folderId} is not an active folder`);
@@ -138,6 +143,15 @@ export class GoogleDriveService implements DriveService {
     if (parentId && !file.parents?.includes(parentId)) {
       throw new Error(
         `Google Drive folder ${folderId} is outside its expected parent`,
+      );
+    }
+    if (expectedName && file.name !== expectedName) {
+      await this.driveRequest<DriveFile>(
+        `/files/${encodeURIComponent(folderId)}?fields=id&supportsAllDrives=true`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ name: expectedName }),
+        },
       );
     }
     return { folderId: file.id, url: folderUrl(file.id) };
@@ -182,7 +196,7 @@ export class GoogleDriveService implements DriveService {
     drive_folder_id: string | null;
   }): Promise<DriveFolder> {
     if (seminar.drive_folder_id) {
-      return await this.verifyFolder(seminar.drive_folder_id);
+      return await this.verifyFolder(seminar.drive_folder_id, seminar.name);
     }
     const root = await this.ensureApplicationRoot();
     return await this.createFolder(seminar.name, root.folderId);
@@ -197,7 +211,12 @@ export class GoogleDriveService implements DriveService {
     seminarFolderId: string,
   ): Promise<DriveFolder> {
     if (session.drive_folder_id) {
-      return await this.verifyFolder(session.drive_folder_id, seminarFolderId);
+      const number = String(session.session_number).padStart(2, "0");
+      return await this.verifyFolder(
+        session.drive_folder_id,
+        `Session ${number} — ${session.title}`,
+        seminarFolderId,
+      );
     }
     const number = String(session.session_number).padStart(2, "0");
     return await this.createFolder(

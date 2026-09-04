@@ -1,4 +1,4 @@
-import { AUTH_TOKEN_KEY, readApiErrorMessage } from "@/utils";
+import { AUTH_TOKEN_KEY, readApiErrorMessage } from "@/lib/utils";
 import {
   Alert,
   Box,
@@ -15,6 +15,31 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import type { LoginRequest, LoginResponse } from "schemas";
 
+const login = async (password: string) => {
+  const fp = await FingerprintJS.load();
+  const { visitorId } = await fp.get();
+
+  const payload: LoginRequest = {
+    client_fingerprint: visitorId,
+    password,
+  };
+
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const message = await readApiErrorMessage(response, "Unable to log in.");
+    throw new Error(message);
+  }
+
+  return (await response.json()) as LoginResponse;
+};
+
 const LandingPage = () => {
   const navigate = useNavigate();
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -29,40 +54,16 @@ const LandingPage = () => {
       setIsSubmitting(true);
 
       try {
-        const fp = await FingerprintJS.load();
-        const { visitorId } = await fp.get();
-
-        const payload: LoginRequest = {
-          client_fingerprint: visitorId,
-          password: value.password,
-        };
-
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          const message = await readApiErrorMessage(
-            response,
-            "Unable to log in.",
-          );
-          throw new Error(message);
-        }
-
-        const data = (await response.json()) as LoginResponse;
+        const data = await login(value.password);
         sessionStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
         navigate("/dashboard");
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unable to log in.";
         setSubmitError(message);
-      } finally {
-        setIsSubmitting(false);
       }
+
+      setIsSubmitting(false);
     },
   });
 
@@ -78,6 +79,7 @@ const LandingPage = () => {
     >
       <Container maxW="lg" py={{ base: 16, md: 24 }}>
         <Box
+          id="landingAuthPanel"
           className="auth-panel glass-panel"
           bg="transparent"
           border="1px solid"
@@ -87,7 +89,7 @@ const LandingPage = () => {
           boxShadow="0 0 0 1px rgba(255,255,255,0.04)"
         >
           <Stack gap={6}>
-            <Stack gap={2}>
+            <Stack id="landingHeaderSection" gap={2}>
               <Text
                 fontSize="xs"
                 letterSpacing="0.22em"
@@ -102,14 +104,15 @@ const LandingPage = () => {
             </Stack>
 
             <form
+              id="landingLoginForm"
               onSubmit={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 void form.handleSubmit();
               }}
             >
-              <Stack gap={4}>
-                <Box>
+              <Stack id="landingFormFieldsContainer" gap={4}>
+                <Box id="landingPasswordFieldBox">
                   <label htmlFor="admin-password" className="field-label">
                     Password
                   </label>
@@ -168,6 +171,7 @@ const LandingPage = () => {
 
                 {submitError ? (
                   <Alert.Root
+                    id="landingSubmitErrorAlert"
                     status="error"
                     bg="red.950"
                     borderColor="red.500"

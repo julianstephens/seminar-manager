@@ -11,6 +11,7 @@ export const createSession = async (
     title: string;
     date: Date;
     drive_folder_id?: string | null;
+    channel_message_appendix?: string | null;
     published_at?: Date | null;
     archived_at?: Date | null;
   },
@@ -74,6 +75,7 @@ export const updateSession = async (
     title: string;
     date: Date;
     drive_folder_id: string | null;
+    channel_message_appendix: string | null;
     published_at: Date | null;
     archived_at: Date | null;
   }>,

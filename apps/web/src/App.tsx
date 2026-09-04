@@ -1,5 +1,6 @@
 import "@/App.css";
-import { getStoredToken, ProtectedRoute } from "@/utils";
+import { ProtectedRoute } from "@/components/protected-route";
+import { getStoredToken } from "@/lib/utils";
 import { Box, Spinner, Text } from "@chakra-ui/react";
 import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";

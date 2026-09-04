@@ -50,6 +50,7 @@ describe("Discord publication messages", () => {
     title: "Death and the Good Life",
     date: new Date("2026-09-18T12:00:00Z"),
     drive_folder_id: "drive-folder",
+    channel_message_appendix: null,
     published_at: null,
     archived_at: null,
     created_at: new Date(),

@@ -45,6 +45,7 @@ export const SessionSchema = z.object({
   date: requiredDate,
   status: z.enum(["draft", "ready", "published", "archived"]),
   drive_folder_id: z.string().nullable(),
+  channel_message_appendix: z.string().nullable(),
   published_at: nullableDate,
   archived_at: nullableDate,
   created_at: requiredDate,
@@ -63,6 +64,7 @@ export const SessionCreateSchema = z.object({
   title: z.string().min(1, "Session title is required"),
   date: isoDateString,
   drive_folder_id: z.string().optional().nullable(),
+  channel_message_appendix: z.string().max(2_000).optional().nullable(),
   published_at: isoDateString.optional().nullable(),
   archived_at: isoDateString.optional().nullable(),
 });

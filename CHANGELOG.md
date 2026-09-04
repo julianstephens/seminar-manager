@@ -1,3 +1,9 @@
+## v0.1.4
+
+- Added ability to update seminar details
+- Added drive folder name syncing
+- Fixed issue with timezone handling
+
 ## v0.1.3
 
 - Minor bug fixes and performance improvements

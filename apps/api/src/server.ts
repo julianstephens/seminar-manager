@@ -861,11 +861,18 @@ export const setupApp = async (options?: {
   });
 
   // POST /api/sessions/:id/publish
-  const PublishSessionBodySchema = z
-    .object({
+  const PublishSessionBodySchema = z.preprocess(
+    (value) => value ?? {},
+    z.object({
       message_appendix: z.string().max(2_000).optional(),
-    })
-    .default({});
+      notifications: z
+        .object({
+          channel_message: z.boolean().optional(),
+          participant_dms: z.boolean().optional(),
+        })
+        .optional(),
+    }),
+  );
 
   typedApp.route({
     method: "POST",
@@ -889,6 +896,10 @@ export const setupApp = async (options?: {
         options?.discordService,
         options?.driveService,
         request.body.message_appendix,
+        {
+          channelMessage: request.body.notifications?.channel_message,
+          participantDms: request.body.notifications?.participant_dms,
+        },
       );
     },
   });

@@ -1,3 +1,14 @@
+import { Layout } from "@/components/layout";
+import { AssignmentDialog } from "@/components/session-editor/assignment-dialog";
+import { AssignmentList } from "@/components/session-editor/assignment-list";
+import { FooterActionBar } from "@/components/session-editor/footer-action-bar";
+import { PublicationLogPanel } from "@/components/session-editor/publication-log-panel";
+import { PublicationReadinessPanel } from "@/components/session-editor/publication-readiness-panel";
+import { ResourceDialog } from "@/components/session-editor/resource-dialog";
+import { ResourceList } from "@/components/session-editor/resource-list";
+import { SessionDetailsPanel } from "@/components/session-editor/session-details-panel";
+import { LogoutErrorAlert } from "@/components/shared/logout-error-alert";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import {
   archiveSession,
   assignmentQueryKeys,
@@ -22,29 +33,22 @@ import {
   sessionQueryKeys,
   updateResource,
   updateSession,
-} from "@/api";
-import { Layout } from "@/components/layout";
-import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+} from "@/lib/api";
 import {
-  AUTH_TOKEN_KEY,
-  authFetch,
-  clearStoredToken,
-  formatUtcTimestamp,
-  readApiErrorMessage,
-  useDebounce,
-} from "@/utils";
+  fromDateTimeInputValue,
+  toDateTimeInputValue,
+} from "@/lib/session-date-time";
+import { getReadinessActionSpec } from "@/lib/session-readiness";
+import { useLogout } from "@/lib/use-logout";
+import { formatUtcTimestamp, useDebounce } from "@/lib/utils";
 import {
   Alert,
   Box,
   Button,
-  CloseButton,
-  Dialog,
   Field,
   Flex,
   Heading,
   Input,
-  Link,
-  Portal,
   Stack,
   Text,
   Textarea,
@@ -52,13 +56,6 @@ import {
 import { useForm, useSelector } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  LuExternalLink,
-  LuFileText,
-  LuFolderPlus,
-  LuLink,
-  LuPlus,
-} from "react-icons/lu";
 import {
   useBeforeUnload,
   useBlocker,
@@ -69,33 +66,15 @@ import {
   AssignmentCreateSchema,
   ResourceCreateSchema,
   SessionUpdateSchema,
-  type LogoutResponse,
   type SessionResponse,
 } from "schemas";
-
-const toDateTimeInputValue = (isoValue: string) => {
-  const parsed = new Date(isoValue);
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
-  }
-
-  const pad = (value: number) => String(value).padStart(2, "0");
-
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
-};
-
-const fromDateTimeInputValue = (dateTimeValue: string) => {
-  const parsed = new Date(dateTimeValue);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-};
 
 const SessionEditorPage = () => {
   const { seminarId, sessionId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const { logoutError, isLoggingOut, handleLogout } = useLogout(navigate);
   const [pendingConfirmation, setPendingConfirmation] = useState<
     | { kind: "delete-resource"; id: string; name: string }
     | { kind: "publish" | "republish" | "archive" }
@@ -103,6 +82,10 @@ const SessionEditorPage = () => {
   >(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [messageAppendix, setMessageAppendix] = useState("");
+  const [publishNotifications, setPublishNotifications] = useState({
+    channel_message: true,
+    participant_dms: true,
+  });
   const [retryStatus, setRetryStatus] = useState<{
     kind: "success" | "error";
     message: string;
@@ -587,7 +570,13 @@ const SessionEditorPage = () => {
   });
 
   const publishMutation = useMutation({
-    mutationFn: (payload: { message_appendix?: string }) =>
+    mutationFn: (payload: {
+      message_appendix?: string;
+      notifications: {
+        channel_message: boolean;
+        participant_dms: boolean;
+      };
+    }) =>
       publishSession(seminarId ?? "", sessionId ?? "", {
         ...payload,
       }),
@@ -660,7 +649,10 @@ const SessionEditorPage = () => {
   });
 
   const isPublishingRef = useRef(false);
-  isPublishingRef.current = publishMutation.isPending;
+
+  useEffect(() => {
+    isPublishingRef.current = publishMutation.isPending;
+  }, [publishMutation.isPending]);
 
   useEffect(() => {
     if (!session || hydratedSessionIdRef.current === session.id) {
@@ -768,6 +760,21 @@ const SessionEditorPage = () => {
     return new Map(resources.map(({ data }) => [data.id, data] as const));
   }, [resources]);
 
+  const resourceItems = resources.map(({ data }) => ({
+    id: data.id,
+    name: data.name,
+    url: data.url,
+    visibility: data.visibility,
+  }));
+
+  const assignmentItems = assignments.map(({ data }) => ({
+    id: data.id,
+    participantName:
+      participantById.get(data.participant_id)?.name ?? "Unknown",
+    resourceName:
+      resourceById.get(data.resource_id)?.name ?? "Unlinked resource",
+  }));
+
   const openCreateResourceDialog = () => {
     setEditingResourceId(null);
     setResourceSubmitError(null);
@@ -797,9 +804,11 @@ const SessionEditorPage = () => {
   };
 
   const getReadinessAction = (issue: string) => {
-    if (issue.includes("session title")) {
+    const spec = getReadinessActionSpec(issue, resources.length > 0);
+
+    if (spec.kind === "focus-title") {
       return {
-        label: "Add title",
+        label: spec.label,
         run: () => {
           scrollToEditorSection("session-details");
           window.setTimeout(() => {
@@ -809,31 +818,35 @@ const SessionEditorPage = () => {
       };
     }
 
-    if (issue.includes("Discord channel")) {
+    if (spec.kind === "view-seminar") {
       return {
-        label: "View seminar",
+        label: spec.label,
         run: () => navigate(`/seminars/${seminarId}`),
       };
     }
 
-    if (issue.includes("assignment is required")) {
-      return resources.length === 0
-        ? { label: "Add resource", run: openCreateResourceDialog }
-        : {
-            label: "Add assignment",
-            run: () => setIsAddAssignmentOpen(true),
-          };
+    if (spec.kind === "add-resource") {
+      return {
+        label: spec.label,
+        run: openCreateResourceDialog,
+      };
     }
 
-    if (issue.startsWith("Resource")) {
-      const resourceName = issue.match(/Resource “(.+)” needs a URL\./)?.[1];
+    if (spec.kind === "add-assignment") {
+      return {
+        label: spec.label,
+        run: () => setIsAddAssignmentOpen(true),
+      };
+    }
+
+    if (spec.kind === "edit-resource-url") {
       const matchingResource = resources.find(
-        ({ data: resource }) => resource.name === resourceName,
+        ({ data: resource }) => resource.name === spec.resourceName,
       )?.data;
 
       if (matchingResource) {
         return {
-          label: "Add URL",
+          label: spec.label,
           run: () => openEditResourceDialog(matchingResource),
         };
       }
@@ -844,52 +857,17 @@ const SessionEditorPage = () => {
       };
     }
 
+    if (spec.kind === "review-resources") {
+      return {
+        label: spec.label,
+        run: () => scrollToEditorSection("session-resources"),
+      };
+    }
+
     return {
-      label: "Review assignments",
+      label: spec.label,
       run: () => scrollToEditorSection("session-assignments"),
     };
-  };
-
-  const handleLogout = async () => {
-    const accessToken = sessionStorage.getItem(AUTH_TOKEN_KEY);
-
-    if (!accessToken) {
-      clearStoredToken();
-      navigate("/");
-      return;
-    }
-
-    setLogoutError(null);
-    setIsLoggingOut(true);
-
-    try {
-      const response = await authFetch("/api/auth/logout", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        const message = await readApiErrorMessage(
-          response,
-          "Logout failed to revoke the current session.",
-        );
-        throw new Error(message);
-      }
-
-      const data = (await response.json()) as LogoutResponse;
-
-      if (!data.success) {
-        throw new Error(data.message ?? "Invalid session.");
-      }
-
-      clearStoredToken();
-      navigate("/");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to log out.";
-      setLogoutError(message);
-    } finally {
-      setIsLoggingOut(false);
-    }
   };
 
   if (!seminarId || !sessionId) {
@@ -965,11 +943,36 @@ const SessionEditorPage = () => {
     publishMutation.isPending ||
     archiveMutation.isPending;
 
+  const scheduledForLabel = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(session.date));
+
+  const publishedAtLabel = session.published_at
+    ? formatUtcTimestamp(session.published_at)
+    : "Not published";
+
   return (
     <Layout onLogout={handleLogout} isLoggingOut={isLoggingOut}>
-      <Box className="app-canvas" color="white" maxW="1240px" mx="auto" pb={28}>
-        <Stack gap={6}>
-          <Flex justify="space-between" align="flex-start" gap={4} wrap="wrap">
+      <Box
+        id="sessionEditorCanvasContainer"
+        className="app-canvas"
+        color="white"
+        maxW="1240px"
+        mx="auto"
+        pb={28}
+      >
+        <Stack id="sessionEditorMainContainer" gap={6}>
+          <Flex
+            id="sessionEditorHeaderContainer"
+            justify="space-between"
+            align="flex-start"
+            gap={4}
+            wrap="wrap"
+          >
             <Stack gap={2}>
               <Button
                 variant="plain"
@@ -983,6 +986,7 @@ const SessionEditorPage = () => {
                 _hover={{ opacity: 0.8 }}
                 onClick={() => navigate(`/seminars/${seminarId}`)}
                 aria-label={`Back to ${seminar.name} sessions`}
+                ps={0}
               >
                 <Text>{seminar.name}</Text>
                 <Text>/</Text>
@@ -1007,6 +1011,7 @@ const SessionEditorPage = () => {
 
           {submitError ? (
             <Alert.Root
+              id="sessionEditorSubmitErrorAlert"
               status="error"
               bg="red.950"
               borderColor="red.500"
@@ -1022,6 +1027,7 @@ const SessionEditorPage = () => {
 
           {saveStatus === "error" ? (
             <Alert.Root
+              id="sessionEditorSaveErrorAlert"
               status="error"
               bg="red.950"
               borderColor="red.500"
@@ -1053,86 +1059,54 @@ const SessionEditorPage = () => {
           ) : null}
 
           <Flex
+            id="sessionEditorContentContainer"
             align="flex-start"
             gap={6}
             direction={{ base: "column", lg: "row" }}
           >
-            <Stack flex="1" minW="0" gap={5}>
-              <Box
-                id="session-details"
-                className="glass-panel"
-                borderRadius="xl"
-                border="1px solid"
-                borderColor="var(--border-soft)"
-                bg="transparent"
-                px={5}
-                py={5}
-              >
-                <Stack gap={4}>
-                  <Box>
-                    <Text color="gray.400" fontSize="sm" mb={2}>
-                      Session Title
-                    </Text>
-                    <form.Field name="title">
-                      {(field) => (
-                        <Input
-                          id="session-title"
-                          aria-label="Session title"
-                          value={field.state.value}
-                          onChange={(event) =>
-                            field.handleChange(event.target.value)
-                          }
-                          onBlur={field.handleBlur}
-                          className="glass-field"
-                          bg="transparent"
-                          borderColor="transparent"
-                          color="white"
-                          _placeholder={{ color: "gray.500" }}
-                        />
-                      )}
-                    </form.Field>
-                  </Box>
-
-                  <Box>
-                    <Text color="gray.400" fontSize="sm" mb={2}>
-                      Scheduled At
-                    </Text>
-                    <form.Field name="date">
-                      {(field) => (
-                        <Input
-                          type="datetime-local"
-                          aria-label="Scheduled date and time"
-                          value={field.state.value}
-                          onChange={(event) =>
-                            field.handleChange(event.target.value)
-                          }
-                          onBlur={field.handleBlur}
-                          className="glass-field"
-                          bg="transparent"
-                          borderColor="transparent"
-                          color="white"
-                        />
-                      )}
-                    </form.Field>
-                  </Box>
-
-                  <Box>
-                    <Text color="gray.400" fontSize="sm" mb={2}>
-                      Status
-                    </Text>
-                    <Text
-                      color="white"
-                      fontWeight="600"
-                      textTransform="capitalize"
-                    >
-                      {session.status}
-                    </Text>
-                    <Text color="gray.400" fontSize="xs" mt={1}>
-                      Status is derived from readiness and publication activity.
-                    </Text>
-                  </Box>
-                </Stack>
-              </Box>
+            <Stack id="sessionEditorLeftPanel" flex="1" minW="0" gap={5}>
+              <SessionDetailsPanel
+                status={session.status}
+                titleField={
+                  <form.Field name="title">
+                    {(field) => (
+                      <Input
+                        id="session-title"
+                        aria-label="Session title"
+                        value={field.state.value}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        onBlur={field.handleBlur}
+                        className="glass-field"
+                        bg="transparent"
+                        borderColor="transparent"
+                        color="white"
+                        _placeholder={{ color: "gray.500" }}
+                      />
+                    )}
+                  </form.Field>
+                }
+                dateField={
+                  <form.Field name="date">
+                    {(field) => (
+                      <Input
+                        type="datetime-local"
+                        aria-label="Scheduled date and time"
+                        value={field.state.value}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        onBlur={field.handleBlur}
+                        className="glass-field"
+                        bg="transparent"
+                        borderColor="transparent"
+                        color="white"
+                      />
+                    )}
+                  </form.Field>
+                }
+              />
 
               <Box
                 id="session-resources"
@@ -1151,340 +1125,147 @@ const SessionEditorPage = () => {
                     textTransform="uppercase"
                     fontWeight="700"
                   >
-                    Shared Resources
+                    Resources
                   </Text>
-                  <Dialog.Root
+                  <ResourceDialog
                     open={isAddResourceOpen}
-                    onOpenChange={(details) => {
-                      if (!details.open) {
+                    onOpenChange={(open) => {
+                      if (!open) {
                         setEditingResourceId(null);
                         setResourceSubmitError(null);
                         resourceForm.reset();
                       }
-                      setIsAddResourceOpen(details.open);
+                      setIsAddResourceOpen(open);
                     }}
-                    size="lg"
+                    onOpenCreate={openCreateResourceDialog}
+                    onCancel={() => {
+                      setEditingResourceId(null);
+                      setResourceSubmitError(null);
+                      resourceForm.reset();
+                      setIsAddResourceOpen(false);
+                    }}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void resourceForm.handleSubmit();
+                    }}
+                    submitError={resourceSubmitError}
+                    isSubmitting={saveResourceMutation.isPending}
+                    isEditing={editingResourceId !== null}
                   >
-                    <Dialog.Trigger asChild>
-                      <Button
-                        variant="ghost"
-                        color="var(--accent-soft)"
-                        onClick={openCreateResourceDialog}
-                      >
-                        <LuPlus />
-                        Add Resource
-                      </Button>
-                    </Dialog.Trigger>
-
-                    <Portal>
-                      <Dialog.Backdrop
-                        className="dialog-backdrop"
-                        bg="rgba(2, 2, 3, 0.72)"
-                        backdropFilter="blur(8px)"
-                      />
-                      <Dialog.Positioner>
-                        <Dialog.Content
-                          className="dialog-glass"
-                          bg="transparent"
-                          color="white"
-                          border="1px solid"
-                          borderColor="transparent"
-                          borderRadius="2xl"
-                          boxShadow="none"
-                          backdropFilter="blur(18px)"
+                    <resourceForm.Field name="name">
+                      {(field) => (
+                        <Field.Root
+                          invalid={field.state.meta.errors.length > 0}
                         >
-                          <Dialog.Header px={6} pt={6} pb={0}>
-                            <Heading as="h2" size="lg">
-                              {editingResourceId
-                                ? "Edit resource"
-                                : "Add resource"}
-                            </Heading>
-                            <Dialog.CloseTrigger asChild>
-                              <CloseButton
-                                size="sm"
-                                color="gray.300"
-                                _hover={{ bg: "whiteAlpha.100" }}
-                              />
-                            </Dialog.CloseTrigger>
-                          </Dialog.Header>
+                          <Field.Label>Resource name</Field.Label>
+                          <Input
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            placeholder="Reading list"
+                            className="glass-field"
+                            bg="transparent"
+                            borderColor={
+                              field.state.meta.errors.length > 0
+                                ? "red.400"
+                                : "whiteAlpha.200"
+                            }
+                          />
+                          {field.state.meta.errors.length > 0 ? (
+                            <Field.ErrorText>
+                              {field.state.meta.errors.join(", ")}
+                            </Field.ErrorText>
+                          ) : null}
+                        </Field.Root>
+                      )}
+                    </resourceForm.Field>
 
-                          <Dialog.Body px={6} py={6}>
-                            <form
-                              id="resource-create-form"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void resourceForm.handleSubmit();
-                              }}
-                            >
-                              <Stack gap={4}>
-                                <resourceForm.Field name="name">
-                                  {(field) => (
-                                    <Field.Root
-                                      invalid={
-                                        field.state.meta.errors.length > 0
-                                      }
-                                    >
-                                      <Field.Label>Resource name</Field.Label>
-                                      <Input
-                                        value={field.state.value}
-                                        onBlur={field.handleBlur}
-                                        onChange={(event) =>
-                                          field.handleChange(event.target.value)
-                                        }
-                                        placeholder="Reading list"
-                                        className="glass-field"
-                                        bg="transparent"
-                                        borderColor={
-                                          field.state.meta.errors.length > 0
-                                            ? "red.400"
-                                            : "whiteAlpha.200"
-                                        }
-                                      />
-                                      {field.state.meta.errors.length > 0 ? (
-                                        <Field.ErrorText>
-                                          {field.state.meta.errors.join(", ")}
-                                        </Field.ErrorText>
-                                      ) : null}
-                                    </Field.Root>
-                                  )}
-                                </resourceForm.Field>
+                    <resourceForm.Field name="url">
+                      {(field) => (
+                        <Field.Root
+                          invalid={field.state.meta.errors.length > 0}
+                        >
+                          <Field.Label>Resource URL</Field.Label>
+                          <Input
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            placeholder="https://example.com/resource"
+                            className="glass-field"
+                            bg="transparent"
+                            borderColor={
+                              field.state.meta.errors.length > 0
+                                ? "red.400"
+                                : "whiteAlpha.200"
+                            }
+                          />
+                          {field.state.meta.errors.length > 0 ? (
+                            <Field.ErrorText>
+                              {field.state.meta.errors.join(", ")}
+                            </Field.ErrorText>
+                          ) : null}
+                        </Field.Root>
+                      )}
+                    </resourceForm.Field>
 
-                                <resourceForm.Field name="url">
-                                  {(field) => (
-                                    <Field.Root
-                                      invalid={
-                                        field.state.meta.errors.length > 0
-                                      }
-                                    >
-                                      <Field.Label>Resource URL</Field.Label>
-                                      <Input
-                                        value={field.state.value}
-                                        onBlur={field.handleBlur}
-                                        onChange={(event) =>
-                                          field.handleChange(event.target.value)
-                                        }
-                                        placeholder="https://example.com/resource"
-                                        className="glass-field"
-                                        bg="transparent"
-                                        borderColor={
-                                          field.state.meta.errors.length > 0
-                                            ? "red.400"
-                                            : "whiteAlpha.200"
-                                        }
-                                      />
-                                      {field.state.meta.errors.length > 0 ? (
-                                        <Field.ErrorText>
-                                          {field.state.meta.errors.join(", ")}
-                                        </Field.ErrorText>
-                                      ) : null}
-                                    </Field.Root>
-                                  )}
-                                </resourceForm.Field>
-
-                                <resourceForm.Field name="visibility">
-                                  {(field) => (
-                                    <Field.Root
-                                      invalid={
-                                        field.state.meta.errors.length > 0
-                                      }
-                                    >
-                                      <Field.Label>Visibility</Field.Label>
-                                      <select
-                                        value={field.state.value}
-                                        onBlur={field.handleBlur}
-                                        onChange={(event) =>
-                                          field.handleChange(
-                                            event.target.value as
-                                              "shared" | "individual",
-                                          )
-                                        }
-                                        style={{
-                                          width: "100%",
-                                          backgroundColor: "black",
-                                          border: `1px solid ${
-                                            field.state.meta.errors.length > 0
-                                              ? "#f56565"
-                                              : "rgba(255,255,255,0.2)"
-                                          }`,
-                                          borderRadius: "0.375rem",
-                                          color: "white",
-                                          padding: "0.625rem 0.75rem",
-                                        }}
-                                      >
-                                        <option value="individual">
-                                          Individual
-                                        </option>
-                                        <option value="shared">Shared</option>
-                                      </select>
-                                      {field.state.meta.errors.length > 0 ? (
-                                        <Field.ErrorText>
-                                          {field.state.meta.errors.join(", ")}
-                                        </Field.ErrorText>
-                                      ) : null}
-                                    </Field.Root>
-                                  )}
-                                </resourceForm.Field>
-
-                                {resourceSubmitError ? (
-                                  <Alert.Root
-                                    status="error"
-                                    bg="red.950"
-                                    borderColor="red.500"
-                                    color="red.100"
-                                  >
-                                    <Alert.Indicator />
-                                    <Alert.Content>
-                                      <Alert.Title>
-                                        {editingResourceId
-                                          ? "Unable to save resource"
-                                          : "Unable to add resource"}
-                                      </Alert.Title>
-                                      <Alert.Description>
-                                        {resourceSubmitError}
-                                      </Alert.Description>
-                                    </Alert.Content>
-                                  </Alert.Root>
-                                ) : null}
-                              </Stack>
-                            </form>
-                          </Dialog.Body>
-
-                          <Dialog.Footer px={6} pb={6} pt={0}>
-                            <Button
-                              variant="ghost"
-                              color="gray.300"
-                              onClick={() => {
-                                setEditingResourceId(null);
-                                setResourceSubmitError(null);
-                                resourceForm.reset();
-                                setIsAddResourceOpen(false);
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              type="submit"
-                              form="resource-create-form"
-                              bg="var(--accent-soft)"
-                              color="#111111"
-                              _hover={{ bg: "var(--accent-soft-strong)" }}
-                              loading={saveResourceMutation.isPending}
-                              disabled={saveResourceMutation.isPending}
-                            >
-                              {saveResourceMutation.isPending
-                                ? editingResourceId
-                                  ? "Saving..."
-                                  : "Adding..."
-                                : editingResourceId
-                                  ? "Save changes"
-                                  : "Add resource"}
-                            </Button>
-                          </Dialog.Footer>
-                        </Dialog.Content>
-                      </Dialog.Positioner>
-                    </Portal>
-                  </Dialog.Root>
+                    <resourceForm.Field name="visibility">
+                      {(field) => (
+                        <Field.Root
+                          invalid={field.state.meta.errors.length > 0}
+                        >
+                          <Field.Label>Visibility</Field.Label>
+                          <select
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(
+                                event.target.value as "shared" | "individual",
+                              )
+                            }
+                            style={{
+                              width: "100%",
+                              backgroundColor: "black",
+                              border: `1px solid ${
+                                field.state.meta.errors.length > 0
+                                  ? "#f56565"
+                                  : "rgba(255,255,255,0.2)"
+                              }`,
+                              borderRadius: "0.375rem",
+                              color: "white",
+                              padding: "0.625rem 0.75rem",
+                            }}
+                          >
+                            <option value="individual">Individual</option>
+                            <option value="shared">Shared</option>
+                          </select>
+                          {field.state.meta.errors.length > 0 ? (
+                            <Field.ErrorText>
+                              {field.state.meta.errors.join(", ")}
+                            </Field.ErrorText>
+                          ) : null}
+                        </Field.Root>
+                      )}
+                    </resourceForm.Field>
+                  </ResourceDialog>
                 </Flex>
 
-                <Stack gap={2}>
-                  {resourcesQuery.isLoading ? (
-                    <Text color="gray.400">Loading resources...</Text>
-                  ) : resources.length === 0 ? (
-                    <Text color="gray.400">No resources yet.</Text>
-                  ) : (
-                    resources.map(({ data: resource }) => (
-                      <Flex
-                        key={resource.id}
-                        align="center"
-                        justify="space-between"
-                        borderRadius="md"
-                        border="1px solid"
-                        className="glass-panel"
-                        borderColor="transparent"
-                        bg="transparent"
-                        px={3}
-                        py={2}
-                        gap={3}
-                      >
-                        <Flex align="center" gap={2} minW="0" flex="1">
-                          <LuFileText />
-                          <Box minW="0">
-                            <Text color="white" fontWeight="600" truncate>
-                              {resource.name}
-                            </Text>
-                            <Link
-                              href={resource.url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <Text
-                                display="block"
-                                color="gray.400"
-                                maxW="80%"
-                                fontSize="xs"
-                                truncate
-                                _hover={{ color: "var(--accent-soft)" }}
-                                _focusVisible={{
-                                  outline: "2px solid",
-                                  outlineColor: "var(--accent-soft)",
-                                  outlineOffset: "2px",
-                                  borderRadius: "sm",
-                                }}
-                              >
-                                {resource.url}
-                              </Text>
-                            </Link>
-                          </Box>
-                        </Flex>
-                        <Flex
-                          gap={3}
-                          align="center"
-                          color="gray.400"
-                          fontSize="sm"
-                        >
-                          <Text>{resource.visibility}</Text>
-                          <Link
-                            href={resource.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              color="var(--accent-soft)"
-                              _hover={{ bg: "rgba(216, 179, 140, 0.1)" }}
-                            >
-                              <LuExternalLink />
-                              Open
-                            </Button>
-                          </Link>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => openEditResourceDialog(resource)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            color="red.300"
-                            onClick={() =>
-                              setPendingConfirmation({
-                                kind: "delete-resource",
-                                id: resource.id,
-                                name: resource.name,
-                              })
-                            }
-                          >
-                            Remove
-                          </Button>
-                        </Flex>
-                      </Flex>
-                    ))
-                  )}
-                </Stack>
+                <ResourceList
+                  isLoading={resourcesQuery.isLoading}
+                  resources={resourceItems}
+                  onEdit={openEditResourceDialog}
+                  onRemove={(resource) => {
+                    setPendingConfirmation({
+                      kind: "delete-resource",
+                      id: resource.id,
+                      name: resource.name,
+                    });
+                  }}
+                />
               </Box>
             </Stack>
 
@@ -1508,663 +1289,231 @@ const SessionEditorPage = () => {
                   >
                     Assignments
                   </Text>
-                  <Dialog.Root
+                  <AssignmentDialog
                     open={isAddAssignmentOpen}
-                    onOpenChange={(details) =>
-                      setIsAddAssignmentOpen(details.open)
-                    }
-                    size="lg"
+                    onOpenChange={setIsAddAssignmentOpen}
+                    onCancel={() => setIsAddAssignmentOpen(false)}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void assignmentForm.handleSubmit();
+                    }}
+                    submitError={assignmentSubmitError}
+                    isSubmitting={createAssignmentMutation.isPending}
                   >
-                    <Dialog.Trigger asChild>
-                      <Button variant="ghost" color="var(--accent-soft)">
-                        <LuPlus />
-                        Add Assignment
-                      </Button>
-                    </Dialog.Trigger>
-
-                    <Portal>
-                      <Dialog.Backdrop
-                        className="dialog-backdrop"
-                        bg="rgba(2, 2, 3, 0.72)"
-                        backdropFilter="blur(8px)"
-                      />
-                      <Dialog.Positioner>
-                        <Dialog.Content
-                          className="dialog-glass"
-                          bg="transparent"
-                          color="white"
-                          border="1px solid"
-                          borderColor="transparent"
-                          borderRadius="2xl"
-                          boxShadow="none"
-                          backdropFilter="blur(18px)"
+                    <assignmentForm.Field name="resource_id">
+                      {(field) => (
+                        <Field.Root
+                          invalid={field.state.meta.errors.length > 0}
                         >
-                          <Dialog.Header px={6} pt={6} pb={0}>
-                            <Heading as="h2" size="lg">
-                              Add assignment
-                            </Heading>
-                            <Dialog.CloseTrigger asChild>
-                              <CloseButton
-                                size="sm"
-                                color="gray.300"
-                                _hover={{ bg: "whiteAlpha.100" }}
-                              />
-                            </Dialog.CloseTrigger>
-                          </Dialog.Header>
+                          <Field.Label>Resource</Field.Label>
+                          <select
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            className="glass-field"
+                            style={{
+                              width: "100%",
+                              backgroundColor: "transparent",
+                              border: `1px solid ${
+                                field.state.meta.errors.length > 0
+                                  ? "#f56565"
+                                  : "rgba(255,255,255,0.2)"
+                              }`,
+                              borderRadius: "0.375rem",
+                              color: "white",
+                              padding: "0.625rem 0.75rem",
+                            }}
+                          >
+                            <option value="">Select a resource</option>
+                            {resources.map(({ data: resource }) => (
+                              <option key={resource.id} value={resource.id}>
+                                {resource.name}
+                              </option>
+                            ))}
+                          </select>
+                          {field.state.meta.errors.length > 0 ? (
+                            <Field.ErrorText>
+                              {field.state.meta.errors.join(", ")}
+                            </Field.ErrorText>
+                          ) : null}
+                        </Field.Root>
+                      )}
+                    </assignmentForm.Field>
 
-                          <Dialog.Body px={6} py={6}>
-                            <form
-                              id="assignment-create-form"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void assignmentForm.handleSubmit();
+                    <assignmentForm.Field name="assign_to_everyone">
+                      {(field) => (
+                        <label
+                          className="assignment-toggle"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                            color: "white",
+                            fontWeight: 500,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.checked)
+                            }
+                          />
+                          Assign to everyone
+                        </label>
+                      )}
+                    </assignmentForm.Field>
+
+                    {!assignmentForm.state.values.assign_to_everyone ? (
+                      <assignmentForm.Field name="participant_id">
+                        {(field) => (
+                          <Field.Root
+                            invalid={field.state.meta.errors.length > 0}
+                          >
+                            <Field.Label>Participant</Field.Label>
+                            <select
+                              value={field.state.value}
+                              onBlur={field.handleBlur}
+                              onChange={(event) =>
+                                field.handleChange(event.target.value)
+                              }
+                              style={{
+                                width: "100%",
+                                backgroundColor: "transparent",
+                                border: `1px solid ${
+                                  field.state.meta.errors.length > 0
+                                    ? "#f56565"
+                                    : "rgba(255,255,255,0.2)"
+                                }`,
+                                borderRadius: "0.375rem",
+                                color: "white",
+                                padding: "0.625rem 0.75rem",
                               }}
                             >
-                              <Stack gap={4}>
-                                <assignmentForm.Field name="resource_id">
-                                  {(field) => (
-                                    <Field.Root
-                                      invalid={
-                                        field.state.meta.errors.length > 0
-                                      }
-                                    >
-                                      <Field.Label>Resource</Field.Label>
-                                      <select
-                                        value={field.state.value}
-                                        onBlur={field.handleBlur}
-                                        onChange={(event) =>
-                                          field.handleChange(event.target.value)
-                                        }
-                                        className="glass-field"
-                                        style={{
-                                          width: "100%",
-                                          backgroundColor: "transparent",
-                                          border: `1px solid ${
-                                            field.state.meta.errors.length > 0
-                                              ? "#f56565"
-                                              : "rgba(255,255,255,0.2)"
-                                          }`,
-                                          borderRadius: "0.375rem",
-                                          color: "white",
-                                          padding: "0.625rem 0.75rem",
-                                        }}
-                                      >
-                                        <option value="">
-                                          Select a resource
-                                        </option>
-                                        {resources.map(({ data: resource }) => (
-                                          <option
-                                            key={resource.id}
-                                            value={resource.id}
-                                          >
-                                            {resource.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      {field.state.meta.errors.length > 0 ? (
-                                        <Field.ErrorText>
-                                          {field.state.meta.errors.join(", ")}
-                                        </Field.ErrorText>
-                                      ) : null}
-                                    </Field.Root>
-                                  )}
-                                </assignmentForm.Field>
-
-                                <assignmentForm.Field name="assign_to_everyone">
-                                  {(field) => (
-                                    <label
-                                      className="assignment-toggle"
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "0.75rem",
-                                        color: "white",
-                                        fontWeight: 500,
-                                      }}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={field.state.value}
-                                        onBlur={field.handleBlur}
-                                        onChange={(event) =>
-                                          field.handleChange(
-                                            event.target.checked,
-                                          )
-                                        }
-                                      />
-                                      Assign to everyone
-                                    </label>
-                                  )}
-                                </assignmentForm.Field>
-
-                                {!assignmentForm.state.values
-                                  .assign_to_everyone ? (
-                                  <assignmentForm.Field name="participant_id">
-                                    {(field) => (
-                                      <Field.Root
-                                        invalid={
-                                          field.state.meta.errors.length > 0
-                                        }
-                                      >
-                                        <Field.Label>Participant</Field.Label>
-                                        <select
-                                          value={field.state.value}
-                                          onBlur={field.handleBlur}
-                                          onChange={(event) =>
-                                            field.handleChange(
-                                              event.target.value,
-                                            )
-                                          }
-                                          style={{
-                                            width: "100%",
-                                            backgroundColor: "transparent",
-                                            border: `1px solid ${
-                                              field.state.meta.errors.length > 0
-                                                ? "#f56565"
-                                                : "rgba(255,255,255,0.2)"
-                                            }`,
-                                            borderRadius: "0.375rem",
-                                            color: "white",
-                                            padding: "0.625rem 0.75rem",
-                                          }}
-                                        >
-                                          <option value="">
-                                            Select a participant
-                                          </option>
-                                          {participants.map(
-                                            ({ data: participant }) => (
-                                              <option
-                                                key={participant.id}
-                                                value={String(participant.id)}
-                                              >
-                                                {participant.name}
-                                              </option>
-                                            ),
-                                          )}
-                                        </select>
-                                        {field.state.meta.errors.length > 0 ? (
-                                          <Field.ErrorText>
-                                            {field.state.meta.errors.join(", ")}
-                                          </Field.ErrorText>
-                                        ) : null}
-                                      </Field.Root>
-                                    )}
-                                  </assignmentForm.Field>
-                                ) : null}
-
-                                {assignmentSubmitError ? (
-                                  <Alert.Root
-                                    status="error"
-                                    bg="red.950"
-                                    borderColor="red.500"
-                                    color="red.100"
-                                  >
-                                    <Alert.Indicator />
-                                    <Alert.Content>
-                                      <Alert.Title>
-                                        Unable to add assignment
-                                      </Alert.Title>
-                                      <Alert.Description>
-                                        {assignmentSubmitError}
-                                      </Alert.Description>
-                                    </Alert.Content>
-                                  </Alert.Root>
-                                ) : null}
-                              </Stack>
-                            </form>
-                          </Dialog.Body>
-
-                          <Dialog.Footer px={6} pb={6} pt={0}>
-                            <Button
-                              variant="ghost"
-                              color="gray.300"
-                              onClick={() => setIsAddAssignmentOpen(false)}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              type="submit"
-                              form="assignment-create-form"
-                              bg="var(--accent-soft)"
-                              color="#111111"
-                              _hover={{ bg: "var(--accent-soft-strong)" }}
-                              loading={createAssignmentMutation.isPending}
-                              disabled={createAssignmentMutation.isPending}
-                            >
-                              {createAssignmentMutation.isPending
-                                ? "Adding..."
-                                : "Add assignment"}
-                            </Button>
-                          </Dialog.Footer>
-                        </Dialog.Content>
-                      </Dialog.Positioner>
-                    </Portal>
-                  </Dialog.Root>
+                              <option value="">Select a participant</option>
+                              {participants.map(({ data: participant }) => (
+                                <option
+                                  key={participant.id}
+                                  value={String(participant.id)}
+                                >
+                                  {participant.name}
+                                </option>
+                              ))}
+                            </select>
+                            {field.state.meta.errors.length > 0 ? (
+                              <Field.ErrorText>
+                                {field.state.meta.errors.join(", ")}
+                              </Field.ErrorText>
+                            ) : null}
+                          </Field.Root>
+                        )}
+                      </assignmentForm.Field>
+                    ) : null}
+                  </AssignmentDialog>
                 </Flex>
 
-                <Stack gap={2}>
-                  {assignmentsQuery.isLoading ? (
-                    <Text color="gray.400">Loading assignments...</Text>
-                  ) : assignments.length === 0 ? (
-                    <Text color="gray.400">No assignments yet.</Text>
-                  ) : (
-                    assignments.map(({ data: assignment }) => {
-                      const participant = participantById.get(
-                        assignment.participant_id,
-                      );
-                      const resource = resourceById.get(assignment.resource_id);
-                      return (
-                        <Box
-                          key={assignment.id}
-                          borderRadius="md"
-                          border="1px solid"
-                          className="glass-panel"
-                          borderColor="transparent"
-                          bg="transparent"
-                          px={3}
-                          py={2}
-                        >
-                          <Text color="gray.400" fontSize="xs" fontWeight="700">
-                            PARTICIPANT {participant?.name ?? "Unknown"}
-                          </Text>
-                          <Flex mt={1} align="center" gap={2} color="gray.200">
-                            <LuLink />
-                            <Text truncate>
-                              {resource?.name ?? "Unlinked resource"}
-                            </Text>
-                          </Flex>
-                        </Box>
-                      );
-                    })
-                  )}
-                </Stack>
+                <AssignmentList
+                  isLoading={assignmentsQuery.isLoading}
+                  assignments={assignmentItems}
+                />
               </Box>
 
-              <Box
-                className="glass-panel"
-                borderRadius="xl"
-                border="1px solid"
-                borderColor="var(--border-soft)"
-                bg="transparent"
-                px={5}
-                py={5}
-              >
-                <Text
-                  fontSize="lg"
-                  letterSpacing="0.02em"
-                  textTransform="uppercase"
-                  fontWeight="700"
-                  mb={3}
-                >
-                  Publishing
-                </Text>
+              <PublicationReadinessPanel
+                isLoading={readinessQuery.isLoading}
+                isError={readinessQuery.isError}
+                ready={readinessQuery.data?.ready === true}
+                issues={readinessQuery.data?.issues ?? []}
+                onRetry={() => {
+                  void readinessQuery.refetch();
+                }}
+                getIssueAction={getReadinessAction}
+                scheduledForLabel={scheduledForLabel}
+                publishedAtLabel={publishedAtLabel}
+              />
 
-                <Stack gap={3} mt={3}>
-                  {readinessQuery.isLoading ? (
-                    <Text color="gray.400" fontSize="sm">
-                      Checking publication requirements…
-                    </Text>
-                  ) : readinessQuery.isError ? (
-                    <Alert.Root status="error" variant="subtle">
-                      <Alert.Indicator />
-                      <Alert.Content>
-                        <Alert.Title>Readiness check unavailable</Alert.Title>
-                        <Alert.Description>
-                          <Stack gap={2} align="flex-start">
-                            <Text>
-                              Publishing is paused until the requirements can be
-                              checked.
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              onClick={() => void readinessQuery.refetch()}
-                            >
-                              Try again
-                            </Button>
-                          </Stack>
-                        </Alert.Description>
-                      </Alert.Content>
-                    </Alert.Root>
-                  ) : readinessQuery.data?.ready ? (
-                    <Box
-                      borderRadius="lg"
-                      border="1px solid"
-                      borderColor="green.700"
-                      bg="rgba(34, 197, 94, 0.08)"
-                      px={4}
-                      py={3}
-                    >
-                      <Text color="green.300" fontWeight="700">
-                        Ready to publish
-                      </Text>
-                      <Text color="gray.300" fontSize="sm" mt={1}>
-                        All required session details and assignments are in
-                        place.
-                      </Text>
-                    </Box>
-                  ) : (
-                    <Stack gap={2}>
-                      <Box>
-                        <Text color="orange.300" fontWeight="700">
-                          {readinessQuery.data?.issues.length ?? 0} requirement
-                          {(readinessQuery.data?.issues.length ?? 0) === 1
-                            ? ""
-                            : "s"}{" "}
-                          remaining
-                        </Text>
-                        <Text color="gray.400" fontSize="sm" mt={1}>
-                          Complete each item below to enable publishing.
-                        </Text>
-                      </Box>
-                      {readinessQuery.data?.issues.map((issue) => {
-                        const action = getReadinessAction(issue);
-                        return (
-                          <Flex
-                            key={issue}
-                            align="center"
-                            justify="space-between"
-                            gap={3}
-                            borderRadius="md"
-                            border="1px solid"
-                            borderColor="orange.800"
-                            bg="rgba(251, 146, 60, 0.06)"
-                            px={3}
-                            py={2}
-                          >
-                            <Text color="orange.100" fontSize="sm">
-                              {issue}
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              flexShrink={0}
-                              borderColor="orange.700"
-                              color="orange.200"
-                              onClick={action.run}
-                            >
-                              {action.label}
-                            </Button>
-                          </Flex>
-                        );
-                      })}
-                    </Stack>
-                  )}
-                  <Text color="gray.400" fontSize="sm">
-                    Scheduled for:{" "}
-                    {new Intl.DateTimeFormat("en-US", {
-                      month: "long",
-                      day: "numeric",
-                      year: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    }).format(new Date(session.date))}
-                  </Text>
-                  <Text color="gray.400" fontSize="sm">
-                    Published at:{" "}
-                    {session.published_at
-                      ? formatUtcTimestamp(session.published_at)
-                      : "Not published"}
-                  </Text>
-                </Stack>
-              </Box>
-
-              <Box
-                className="glass-panel"
-                borderRadius="xl"
-                border="1px solid"
-                borderColor="var(--border-soft)"
-                bg="transparent"
-                px={5}
-                py={5}
-              >
-                <Text
-                  fontSize="lg"
-                  letterSpacing="0.02em"
-                  textTransform="uppercase"
-                  fontWeight="700"
-                  mb={3}
-                >
-                  Publication Log
-                </Text>
-
-                {retryStatus ? (
-                  <Alert.Root
-                    status={retryStatus.kind}
-                    mb={3}
-                    bg={retryStatus.kind === "error" ? "red.950" : "green.950"}
-                    color={
-                      retryStatus.kind === "error" ? "red.100" : "green.100"
-                    }
-                  >
-                    <Alert.Indicator />
-                    <Alert.Content>
-                      <Alert.Description>
-                        {retryStatus.message}
-                      </Alert.Description>
-                    </Alert.Content>
-                  </Alert.Root>
-                ) : null}
-
-                <Stack gap={2}>
-                  {publicationRecordsQuery.isLoading ? (
-                    <Text color="gray.400">Loading publication records...</Text>
-                  ) : publicationRecords.length === 0 ? (
-                    <Text color="gray.400">No publication activity yet.</Text>
-                  ) : (
-                    publicationRecords.slice(0, 5).map(({ data: record }) => (
-                      <Flex
-                        key={record.id}
-                        justify="space-between"
-                        align="center"
-                        gap={3}
-                        borderRadius="md"
-                        border="1px solid"
-                        className="glass-panel"
-                        borderColor="transparent"
-                        bg="transparent"
-                        px={3}
-                        py={2}
-                      >
-                        <Stack gap={0}>
-                          <Text color="gray.200" textTransform="capitalize">
-                            {record.action.replaceAll("_", " ")} (
-                            {record.status})
-                          </Text>
-                          {record.error ? (
-                            <Text color="red.300" fontSize="xs">
-                              {record.error}
-                            </Text>
-                          ) : null}
-                        </Stack>
-                        <Flex align="center" gap={2}>
-                          <Text color="gray.400" fontSize="xs">
-                            {formatUtcTimestamp(record.created_at)}
-                          </Text>
-                          {record.status === "failed" ? (
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              loading={
-                                retryPublicationMutation.isPending &&
-                                retryPublicationMutation.variables === record.id
-                              }
-                              disabled={retryPublicationMutation.isPending}
-                              onClick={() =>
-                                retryPublicationMutation.mutate(record.id)
-                              }
-                            >
-                              Retry
-                            </Button>
-                          ) : null}
-                        </Flex>
-                      </Flex>
-                    ))
-                  )}
-                </Stack>
-              </Box>
+              <PublicationLogPanel
+                retryStatus={retryStatus}
+                isLoading={publicationRecordsQuery.isLoading}
+                records={publicationRecords.map(({ data: record }) => ({
+                  id: record.id,
+                  action: record.action,
+                  status: record.status,
+                  error: record.error ?? null,
+                  created_at: record.created_at,
+                }))}
+                isRetryPending={retryPublicationMutation.isPending}
+                retryPendingId={retryPublicationMutation.variables}
+                onRetryRecord={(recordId) => {
+                  retryPublicationMutation.mutate(recordId);
+                }}
+                formatTimestamp={formatUtcTimestamp}
+              />
             </Stack>
           </Flex>
         </Stack>
 
-        <Box
-          position="fixed"
-          left={{ base: 0, md: "var(--sidebar-width, 260px)" }}
-          right={0}
-          bottom={0}
-          bg="rgba(6, 6, 8, 0.92)"
-          borderTop="1px solid"
-          borderColor="var(--border-soft)"
-          backdropFilter="blur(12px)"
-          px={{ base: 6, md: 10 }}
-          py={4}
-          zIndex={9}
-        >
-          <Flex
-            justify="space-between"
-            align="center"
-            maxW="1240px"
-            mx="auto"
-            gap={3}
-            wrap="wrap"
-          >
-            <Stack gap={0} role="status" aria-live="polite" aria-atomic="true">
-              <Text color="gray.400" fontSize="sm">
-                {saveStatus === "saving"
-                  ? "Saving changes…"
-                  : saveStatus === "unsaved"
-                    ? "Unsaved changes — autosave pending…"
-                    : saveStatus === "error"
-                      ? "Save failed — your changes are still in this browser."
-                      : lastSavedAt !== null
-                        ? `Saved at ${lastSavedAt.toLocaleTimeString()}`
-                        : "All changes saved."}
-              </Text>
-              {!readinessQuery.isLoading &&
-              readinessQuery.data?.ready === false ? (
-                <Text color="orange.300" fontSize="xs">
-                  Complete {readinessQuery.data.issues.length} publication
-                  requirement
-                  {readinessQuery.data.issues.length === 1 ? "" : "s"} above to
-                  enable Publish.
-                </Text>
-              ) : readinessQuery.isError ? (
-                <Text color="red.300" fontSize="xs">
-                  Publish is unavailable until readiness can be checked.
-                </Text>
-              ) : null}
-            </Stack>
-            <Flex gap={3} wrap="wrap">
-              {session.drive_folder_id ? (
-                <Link
-                  href={`https://drive.google.com/drive/folders/${session.drive_folder_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Button
-                    variant="outline"
-                    borderColor="whiteAlpha.300"
-                    color="white"
-                  >
-                    <LuExternalLink />
-                    Open Drive Folder
-                  </Button>
-                </Link>
-              ) : (
-                <Button
-                  variant="outline"
-                  borderColor="whiteAlpha.300"
-                  color="white"
-                  onClick={() => {
-                    const nextDate = fromDateTimeInputValue(
-                      form.state.values.date,
-                    );
-                    if (!nextDate) {
-                      setSubmitError(
-                        "Please choose a valid scheduled date and time.",
-                      );
-                      return;
-                    }
-                    void prepareDriveMutation.mutateAsync({
-                      title: form.state.values.title.trim(),
-                      date: nextDate,
-                    });
-                  }}
-                  disabled={isAnySavePending}
-                  loading={prepareDriveMutation.isPending}
-                >
-                  <LuFolderPlus />
-                  Prepare Drive Folder
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                borderColor="whiteAlpha.300"
-                color="white"
-                onClick={() => {
-                  const nextDate = fromDateTimeInputValue(
-                    form.state.values.date,
-                  );
-                  if (!nextDate) {
-                    setSubmitError(
-                      "Please choose a valid scheduled date and time.",
-                    );
-                    return;
-                  }
+        <FooterActionBar
+          saveStatus={saveStatus}
+          lastSavedAt={lastSavedAt}
+          readinessIsLoading={readinessQuery.isLoading}
+          readinessIsError={readinessQuery.isError}
+          readinessReady={readinessQuery.data?.ready === true}
+          readinessIssueCount={readinessQuery.data?.issues.length ?? 0}
+          driveFolderId={session.drive_folder_id}
+          isAnySavePending={isAnySavePending}
+          isPrepareDrivePending={prepareDriveMutation.isPending}
+          isDraftPending={draftMutation.isPending}
+          isPublishPending={publishMutation.isPending}
+          isPublished={Boolean(session.published_at)}
+          isArchived={Boolean(session.archived_at)}
+          onPrepareDrive={() => {
+            const nextDate = fromDateTimeInputValue(form.state.values.date);
+            if (!nextDate) {
+              setSubmitError("Please choose a valid scheduled date and time.");
+              return;
+            }
+            void prepareDriveMutation.mutateAsync({
+              title: form.state.values.title.trim(),
+              date: nextDate,
+            });
+          }}
+          onSaveNow={() => {
+            const nextDate = fromDateTimeInputValue(form.state.values.date);
+            if (!nextDate) {
+              setSubmitError("Please choose a valid scheduled date and time.");
+              return;
+            }
 
-                  saveCurrentDraft();
-                }}
-                disabled={isAnySavePending}
-                loading={draftMutation.isPending}
-              >
-                Save Now
-              </Button>
-              <Button
-                bg="var(--accent-soft)"
-                color="#111111"
-                _hover={{ bg: "var(--accent-soft-strong)" }}
-                onClick={() => {
-                  const nextDate = fromDateTimeInputValue(
-                    form.state.values.date,
-                  );
-                  if (!nextDate) {
-                    setSubmitError(
-                      "Please choose a valid scheduled date and time.",
-                    );
-                    return;
-                  }
+            saveCurrentDraft();
+          }}
+          onPublish={() => {
+            const nextDate = fromDateTimeInputValue(form.state.values.date);
+            if (!nextDate) {
+              setSubmitError("Please choose a valid scheduled date and time.");
+              return;
+            }
 
-                  setPendingConfirmation({
-                    kind: session.published_at ? "republish" : "publish",
-                  });
-                  setMessageAppendix("");
-                }}
-                disabled={
-                  isAnySavePending || readinessQuery.data?.ready !== true
-                }
-                loading={publishMutation.isPending}
-              >
-                {session?.published_at
-                  ? "Republish Session"
-                  : "Publish Session"}
-              </Button>
-              {session?.published_at && !session?.archived_at ? (
-                <Button
-                  variant="outline"
-                  borderColor="whiteAlpha.300"
-                  color="white"
-                  disabled={isAnySavePending}
-                  onClick={() => {
-                    setPendingConfirmation({ kind: "archive" });
-                  }}
-                >
-                  Archive Session
-                </Button>
-              ) : null}
-            </Flex>
-          </Flex>
-        </Box>
+            setPendingConfirmation({
+              kind: session.published_at ? "republish" : "publish",
+            });
+            setMessageAppendix(
+              session.published_at
+                ? (session.channel_message_appendix ?? "")
+                : "",
+            );
+            setPublishNotifications({
+              channel_message: true,
+              participant_dms: true,
+            });
+          }}
+          onArchive={() => {
+            setPendingConfirmation({ kind: "archive" });
+          }}
+        />
       </Box>
 
       <ConfirmationDialog
@@ -2184,8 +1533,8 @@ const SessionEditorPage = () => {
             : pendingConfirmation?.kind === "archive"
               ? "This session will be archived and an archive update may be sent to connected services."
               : pendingConfirmation?.kind === "republish"
-                ? `This will update the published session in Google Drive and Discord for ${participants.length} participant${participants.length === 1 ? "" : "s"}.`
-                : `This will publish the session to Google Drive and Discord for ${participants.length} participant${participants.length === 1 ? "" : "s"}.`
+                ? "Choose which notifications to send with this update. The Drive folder will still be prepared."
+                : "Choose which notifications to send now. The Drive folder will still be prepared."
         }
         confirmLabel={
           pendingConfirmation?.kind === "delete-resource"
@@ -2228,27 +1577,65 @@ const SessionEditorPage = () => {
               return;
             }
             publishMutation.mutate({
-              message_appendix: messageAppendix.trim() || undefined,
+              message_appendix: messageAppendix.trim(),
+              notifications: publishNotifications,
             });
           }
         }}
       >
         {pendingConfirmation?.kind === "publish" ||
         pendingConfirmation?.kind === "republish" ? (
-          <Field.Root>
-            <Field.Label>Additional channel message (optional)</Field.Label>
-            <Textarea
-              value={messageAppendix}
-              onChange={(event) => setMessageAppendix(event.target.value)}
-              placeholder="Add a Markdown-formatted note…"
-              rows={5}
-              maxLength={2_000}
-              disabled={publishMutation.isPending}
-            />
-            <Field.HelperText color="gray.400">
-              Appended to the Discord channel post. Markdown is supported.
-            </Field.HelperText>
-          </Field.Root>
+          <Stack gap={4}>
+            <Field.Root>
+              <Field.Label>Notifications to send</Field.Label>
+              <Stack gap={2} mt={1}>
+                <label className="assignment-toggle">
+                  <input
+                    type="checkbox"
+                    checked={publishNotifications.channel_message}
+                    onChange={(event) =>
+                      setPublishNotifications((current) => ({
+                        ...current,
+                        channel_message: event.target.checked,
+                      }))
+                    }
+                    disabled={publishMutation.isPending}
+                  />{" "}
+                  Channel message with shared resources
+                </label>
+                <label className="assignment-toggle">
+                  <input
+                    type="checkbox"
+                    checked={publishNotifications.participant_dms}
+                    onChange={(event) =>
+                      setPublishNotifications((current) => ({
+                        ...current,
+                        participant_dms: event.target.checked,
+                      }))
+                    }
+                    disabled={publishMutation.isPending}
+                  />{" "}
+                  Individual assignment messages
+                </label>
+              </Stack>
+            </Field.Root>
+            {publishNotifications.channel_message ? (
+              <Field.Root>
+                <Field.Label>Additional channel message (optional)</Field.Label>
+                <Textarea
+                  value={messageAppendix}
+                  onChange={(event) => setMessageAppendix(event.target.value)}
+                  placeholder="Add a Markdown-formatted note…"
+                  rows={5}
+                  maxLength={2_000}
+                  disabled={publishMutation.isPending}
+                />
+                <Field.HelperText color="gray.400">
+                  Appended to the Discord channel post. Markdown is supported.
+                </Field.HelperText>
+              </Field.Root>
+            ) : null}
+          </Stack>
         ) : null}
       </ConfirmationDialog>
 
@@ -2268,25 +1655,10 @@ const SessionEditorPage = () => {
       />
 
       {logoutError ? (
-        <Alert.Root
-          status="error"
-          position="fixed"
-          top={5}
-          right={5}
-          width="sm"
-          bg="red.950"
-          borderColor="red.500"
-          color="red.100"
-          zIndex={10}
-        >
-          <Alert.Indicator />
-          <Alert.Content>
-            <Alert.Title>Logout failed</Alert.Title>
-            <Alert.Description>
-              <Text>{logoutError}</Text>
-            </Alert.Description>
-          </Alert.Content>
-        </Alert.Root>
+        <LogoutErrorAlert
+          id="sessionEditorLogoutErrorAlert"
+          message={logoutError}
+        />
       ) : null}
     </Layout>
   );

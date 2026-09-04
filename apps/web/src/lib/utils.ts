@@ -1,6 +1,4 @@
-import type { PropsWithChildren } from "react";
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router";
 import type { ApiErrorResponse } from "schemas";
 
 export const AUTH_TOKEN_KEY = "seminar-manager:access-token";
@@ -77,16 +75,6 @@ export const formatUtcTimestamp = (value: string | null | undefined) => {
     second: "2-digit",
     timeZoneName: "short",
   }).format(date);
-};
-
-export const ProtectedRoute = ({ children }: PropsWithChildren) => {
-  const token = getStoredToken();
-
-  if (!token) {
-    return <Navigate to="/" replace />;
-  }
-
-  return <>{children} </>;
 };
 
 export function useDebounce<T>(value: T, delayMs: number): T {
