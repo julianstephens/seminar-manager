@@ -22,6 +22,7 @@ export type PublicationResult = {
   readiness: { ready: boolean; issues: string[] };
   results: {
     drive: "success" | "failed";
+    scheduled_event?: "success" | "failed";
     channel_message?: "success" | "failed";
     archive_message?: "success" | "failed";
     participant_dms: { participant_id: number; status: "success" | "failed" }[];
@@ -521,6 +522,7 @@ export const publishSession = async (
     notifications?: {
       channel_message?: boolean;
       participant_dms?: boolean;
+      create_event?: boolean;
     };
   },
 ): Promise<PublicationResult> => {

@@ -1,8 +1,11 @@
+import { createCalendar } from "./calendar";
 import { env } from "@/env";
 import {
   DiscordJsService,
   discordErrorMessage,
+  discordEventUrl,
   type DiscordService,
+  type DiscordMessage,
 } from "@/integrations/discord/discord-service";
 import {
   GoogleDriveService,
@@ -27,7 +30,11 @@ import {
 
 export type SessionLifecycle = "draft" | "ready" | "published" | "archived";
 export type PublicationAction =
-  "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+  | "scheduled_event"
+  | "channel_message"
+  | "participant_dm"
+  | "drive_setup"
+  | "archive_message";
 
 export type Readiness = { ready: boolean; issues: string[] };
 export type PublicationResult = {
@@ -36,6 +43,7 @@ export type PublicationResult = {
   readiness: Readiness;
   results: {
     drive: "success" | "failed";
+    scheduled_event?: "success" | "failed";
     channel_message?: "success" | "failed";
     archive_message?: "success" | "failed";
     participant_dms: { participant_id: number; status: "success" | "failed" }[];
@@ -50,6 +58,7 @@ export type DrivePreparationResult = {
 export type PublishNotificationOptions = {
   channelMessage?: boolean;
   participantDms?: boolean;
+  createEvent?: boolean;
 };
 
 type SessionDetails = Awaited<ReturnType<typeof getSessionById>> & {};
@@ -64,20 +73,27 @@ export const formatChannelMessage = (
   resources: ResourceDetails[],
   sessionFolderUrl?: string | null,
   messageAppendix?: string,
-): { content: string } => {
+  eventUrl?: string | null,
+): DiscordMessage => {
+  const calendar = createCalendar({
+    id: session.id,
+    title: `${seminar.name} — Session ${session.session_number}: ${session.title}`,
+    start: session.date,
+    description: [eventUrl, sessionFolderUrl].filter(Boolean).join("\n"),
+  });
   const shared = resources.filter(({ visibility }) => visibility === "shared");
   const materials = shared.length
     ? shared.map(({ name, url }) => `- [${name}](${url})`).join("\n")
     : "- No shared materials";
-  const date = new Intl.DateTimeFormat("en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-  }).format(session.date);
+  // Let Discord render the saved instant in each reader's local timezone.
+  const date = `<t:${Math.floor(session.date.getTime() / 1_000)}:f>`;
 
   const content = [
     `**${seminar.name} — Session ${session.session_number}**`,
     `**${session.title}**`,
     date,
+    ...(eventUrl ? [`[View event](${eventUrl})`] : []),
+    `[Add to Google Calendar](<${calendar.googleUrl}>) · Apple Calendar / iCal: open the attached .ics file`,
     "**Materials**",
     materials,
     ...(sessionFolderUrl ? [`[Session folder](${sessionFolderUrl})`] : []),
@@ -91,7 +107,13 @@ export const formatChannelMessage = (
     );
   }
 
-  return { content };
+  return {
+    content,
+    calendarFile: {
+      name: `session-${session.session_number}.ics`,
+      content: calendar.ics,
+    },
+  };
 };
 
 export const formatDirectMessage = (
@@ -316,6 +338,35 @@ export const getSessionLifecycle = async (
   return (await getReadiness(db, session)).ready ? "ready" : "draft";
 };
 
+const getPriorEvent = (db: Kysely<Database>, sessionId: string) =>
+  db
+    .selectFrom("publication_record")
+    .selectAll()
+    .where("session_id", "=", sessionId)
+    .where("action", "=", "scheduled_event")
+    .where("status", "=", "success")
+    .where("external_id", "is not", null)
+    .orderBy("created_at", "desc")
+    .executeTakeFirst();
+
+const ensureScheduledEvent = async (
+  db: Kysely<Database>,
+  discordService: DiscordService,
+  seminar: SeminarDetails,
+  session: NonNullable<SessionDetails>,
+) => {
+  const prior = await getPriorEvent(db, session.id);
+  return runDiscordOperation(async () => {
+    if (prior?.external_id) return { messageId: prior.external_id };
+    const event = await discordService.createScheduledEvent({
+      name: session.title,
+      location: seminar.name,
+      startTime: session.date,
+    });
+    return { messageId: event.eventId };
+  });
+};
+
 export const publishSession = async (
   db: Kysely<Database>,
   sessionId: string,
@@ -354,6 +405,21 @@ export const publishSession = async (
     messageAppendix === undefined
       ? (session.channel_message_appendix ?? undefined)
       : messageAppendix;
+  let event: Awaited<ReturnType<typeof runDiscordOperation>> | undefined;
+  let eventId = (await getPriorEvent(db, session.id))?.external_id;
+  if (notifications.createEvent) {
+    event = await ensureScheduledEvent(db, discordService, seminar, session);
+    eventId = event.externalId;
+    await record(
+      db,
+      session.id,
+      "scheduled_event",
+      event.status,
+      null,
+      event.externalId,
+      event.error,
+    );
+  }
   let channel: Awaited<ReturnType<typeof runDiscordOperation>> | undefined;
   if (sendChannelMessage) {
     const priorChannelMessage = await db
@@ -372,6 +438,7 @@ export const publishSession = async (
         resources,
         driveResult.folderUrl,
         effectiveMessageAppendix,
+        eventId ? discordEventUrl(env.DISCORD_GUILD_ID, eventId) : null,
       );
       if (priorChannelMessage?.external_id) {
         await discordService.editChannelMessage(
@@ -458,6 +525,7 @@ export const publishSession = async (
     readiness,
     results: {
       drive: driveResult.status,
+      scheduled_event: event?.status,
       channel_message: channel?.status,
       participant_dms,
     },
@@ -552,11 +620,23 @@ export const retryPublication = async (
       error: driveResult.error,
     });
     return updated;
+  } else if (existing.action === "scheduled_event") {
+    result = await ensureScheduledEvent(db, discordService, seminar, session);
   } else if (existing.action === "channel_message") {
+    const eventId = (await getPriorEvent(db, session.id))?.external_id;
     result = await runDiscordOperation(() =>
       discordService.sendChannelMessage(
         seminar.discord_channel_id,
-        formatChannelMessage(seminar, session, resources),
+        formatChannelMessage(
+          seminar,
+          session,
+          resources,
+          session.drive_folder_id
+            ? `https://drive.google.com/drive/folders/${session.drive_folder_id}`
+            : null,
+          session.channel_message_appendix ?? undefined,
+          eventId ? discordEventUrl(env.DISCORD_GUILD_ID, eventId) : null,
+        ),
       ),
     );
   } else if (existing.action === "archive_message") {
@@ -595,5 +675,50 @@ export const retryPublication = async (
     external_id: result.externalId,
     error: result.error,
   });
+  if (
+    existing.action === "scheduled_event" &&
+    result.status === "success" &&
+    result.externalId
+  ) {
+    const channel = await db
+      .selectFrom("publication_record")
+      .selectAll()
+      .where("session_id", "=", session.id)
+      .where("action", "=", "channel_message")
+      .where("status", "=", "success")
+      .where("external_id", "is not", null)
+      .orderBy("created_at", "desc")
+      .executeTakeFirst();
+    if (channel?.external_id) {
+      const messageId = channel.external_id;
+      const eventUrl = discordEventUrl(env.DISCORD_GUILD_ID, result.externalId);
+      const edit = await runDiscordOperation(async () => {
+        await discordService.editChannelMessage(
+          seminar.discord_channel_id,
+          messageId,
+          formatChannelMessage(
+            seminar,
+            session,
+            resources,
+            session.drive_folder_id
+              ? `https://drive.google.com/drive/folders/${session.drive_folder_id}`
+              : null,
+            session.channel_message_appendix ?? undefined,
+            eventUrl,
+          ),
+        );
+        return { messageId };
+      });
+      await record(
+        db,
+        session.id,
+        "channel_message",
+        edit.status,
+        null,
+        edit.externalId,
+        edit.error,
+      );
+    }
+  }
   return updated;
 };

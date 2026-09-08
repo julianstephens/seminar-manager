@@ -74,6 +74,7 @@ export const PublicationRecordSchema = z.object({
   id: z.number().int().positive(),
   session_id: z.uuid(),
   action: z.enum([
+    "scheduled_event",
     "channel_message",
     "participant_dm",
     "drive_setup",
@@ -97,6 +98,7 @@ export type PublicationRecordResponse = z.infer<
 export const PublicationRecordCreateSchema = z.object({
   session_id: z.uuid(),
   action: z.enum([
+    "scheduled_event",
     "channel_message",
     "participant_dm",
     "drive_setup",

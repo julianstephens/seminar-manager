@@ -1,3 +1,9 @@
+## v0.1.5
+
+- Fixed issue with seminar session time not converting to local timezone in Discord channel message
+- Added support for event creation on session publish
+- Added support for calendar event creation on session publish
+
 ## v0.1.4
 
 - Added ability to update seminar details

@@ -6,7 +6,11 @@ export const createPublicationRecord = async (
   values: {
     session_id: string;
     action:
-      "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+      | "scheduled_event"
+      | "channel_message"
+      | "participant_dm"
+      | "drive_setup"
+      | "archive_message";
     participant_id?: number | null;
     external_id?: string | null;
     status?: "success" | "failed";
@@ -68,7 +72,11 @@ export const updatePublicationRecord = async (
   values: Partial<{
     session_id: string;
     action:
-      "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+      | "scheduled_event"
+      | "channel_message"
+      | "participant_dm"
+      | "drive_setup"
+      | "archive_message";
     participant_id: number | null;
     external_id: string | null;
     status: "success" | "failed";

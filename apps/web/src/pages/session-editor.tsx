@@ -85,6 +85,7 @@ const SessionEditorPage = () => {
   const [publishNotifications, setPublishNotifications] = useState({
     channel_message: true,
     participant_dms: true,
+    create_event: false,
   });
   const [retryStatus, setRetryStatus] = useState<{
     kind: "success" | "error";
@@ -575,12 +576,13 @@ const SessionEditorPage = () => {
       notifications: {
         channel_message: boolean;
         participant_dms: boolean;
+        create_event: boolean;
       };
     }) =>
       publishSession(seminarId ?? "", sessionId ?? "", {
         ...payload,
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       void queryClient.setQueryData(
         sessionQueryKeys.detail(seminarId ?? "", sessionId ?? ""),
         (current: SessionResponse | undefined) => {
@@ -603,7 +605,11 @@ const SessionEditorPage = () => {
         queryKey: publicationRecordQueryKeys.list(sessionId ?? ""),
       });
       form.setFieldValue("published", true);
-      setSubmitError(null);
+      setSubmitError(
+        result.results.scheduled_event === "failed"
+          ? "Session published, but the Discord event could not be created. See publication history for details and retry."
+          : null,
+      );
       setMessageAppendix("");
       setPendingConfirmation(null);
     },
@@ -1508,6 +1514,7 @@ const SessionEditorPage = () => {
             setPublishNotifications({
               channel_message: true,
               participant_dms: true,
+              create_event: false,
             });
           }}
           onArchive={() => {
@@ -1587,7 +1594,7 @@ const SessionEditorPage = () => {
         pendingConfirmation?.kind === "republish" ? (
           <Stack gap={4}>
             <Field.Root>
-              <Field.Label>Notifications to send</Field.Label>
+              <Field.Label>Publish options</Field.Label>
               <Stack gap={2} mt={1}>
                 <label className="assignment-toggle">
                   <input
@@ -1616,6 +1623,20 @@ const SessionEditorPage = () => {
                     disabled={publishMutation.isPending}
                   />{" "}
                   Individual assignment messages
+                </label>
+                <label className="assignment-toggle">
+                  <input
+                    type="checkbox"
+                    checked={publishNotifications.create_event}
+                    onChange={(event) =>
+                      setPublishNotifications((current) => ({
+                        ...current,
+                        create_event: event.target.checked,
+                      }))
+                    }
+                    disabled={publishMutation.isPending}
+                  />{" "}
+                  Create Discord event
                 </label>
               </Stack>
             </Field.Root>

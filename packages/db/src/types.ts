@@ -76,7 +76,11 @@ export interface PublicationRecordTable {
   id: Generated<number>;
   session_id: string;
   action:
-    "channel_message" | "participant_dm" | "drive_setup" | "archive_message";
+    | "scheduled_event"
+    | "channel_message"
+    | "participant_dm"
+    | "drive_setup"
+    | "archive_message";
   participant_id: number | null;
   external_id: string | null;
   status: "success" | "failed";

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { DiscordJsService } from "./discord-service";
 
-type Call = { method: string; route: string; body?: unknown };
+type Call = { method: string; route: string; body?: unknown; files?: unknown };
 
 const setup = (channelGuildId = "guild-1") => {
   const calls: Call[] = [];
@@ -12,13 +12,29 @@ const setup = (channelGuildId = "guild-1") => {
       calls.push({ method: "GET", route });
       return { id: "channel-1", guild_id: channelGuildId };
     },
-    post: async (route: string, options?: { body?: unknown }) => {
-      calls.push({ method: "POST", route, body: options?.body });
+    post: async (
+      route: string,
+      options?: { body?: unknown; files?: unknown },
+    ) => {
+      calls.push({
+        method: "POST",
+        route,
+        body: options?.body,
+        ...(options?.files ? { files: options.files } : {}),
+      });
       if (route.endsWith("/users/@me/channels")) return { id: "dm-1" };
       return { id: "message-1" };
     },
-    patch: async (route: string, options?: { body?: unknown }) => {
-      calls.push({ method: "PATCH", route, body: options?.body });
+    patch: async (
+      route: string,
+      options?: { body?: unknown; files?: unknown },
+    ) => {
+      calls.push({
+        method: "PATCH",
+        route,
+        body: options?.body,
+        ...(options?.files ? { files: options.files } : {}),
+      });
       return { id: "message-1" };
     },
   };
@@ -61,6 +77,32 @@ describe("DiscordJsService", () => {
     assert.equal(calls[1]?.route, "/channels/dm-1/messages");
   });
 
+  it("creates an external event with the session time, title, and seminar location", async () => {
+    const { calls, service } = setup();
+    assert.deepEqual(
+      await service.createScheduledEvent({
+        name: "Session title",
+        location: "Seminar name",
+        startTime: new Date("2026-09-18T19:00:00-04:00"),
+      }),
+      { eventId: "message-1" },
+    );
+    assert.deepEqual(calls, [
+      {
+        method: "POST",
+        route: "/guilds/guild-1/scheduled-events",
+        body: {
+          name: "Session title",
+          entity_type: 3,
+          privacy_level: 2,
+          entity_metadata: { location: "Seminar name" },
+          scheduled_start_time: "2026-09-18T23:00:00.000Z",
+          scheduled_end_time: "2026-09-19T00:00:00.000Z",
+        },
+      },
+    ]);
+  });
+
   it("edits an existing publication message", async () => {
     const { calls, service } = setup();
     await service.editChannelMessage("channel-1", "message-1", {
@@ -69,6 +111,33 @@ describe("DiscordJsService", () => {
 
     assert.equal(calls[1]?.method, "PATCH");
     assert.equal(calls[1]?.route, "/channels/channel-1/messages/message-1");
+  });
+
+  it("uploads calendar files and replaces the attachment when editing", async () => {
+    const { calls, service } = setup();
+    const message = {
+      content: "Calendar",
+      calendarFile: {
+        name: "session-1.ics",
+        content: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+      },
+    };
+    await service.sendChannelMessage("channel-1", message);
+    await service.editChannelMessage("channel-1", "message-1", message);
+    for (const call of [calls[1], calls[3]]) {
+      assert.deepEqual(call?.body, {
+        content: "Calendar",
+        allowed_mentions: { parse: [] },
+        attachments: [{ id: "0", filename: "session-1.ics" }],
+      });
+      assert.deepEqual(call?.files, [
+        {
+          name: "session-1.ics",
+          data: Buffer.from(message.calendarFile.content),
+          contentType: "text/calendar; charset=utf-8",
+        },
+      ]);
+    }
   });
 
   it("rejects empty and oversized messages before sending", async () => {

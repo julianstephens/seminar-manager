@@ -820,6 +820,7 @@ export const setupApp = async (options?: {
     readiness: z.object({ ready: z.boolean(), issues: z.string().array() }),
     results: z.object({
       drive: z.enum(["success", "failed"]),
+      scheduled_event: z.enum(["success", "failed"]).optional(),
       channel_message: z.enum(["success", "failed"]).optional(),
       archive_message: z.enum(["success", "failed"]).optional(),
       participant_dms: z.array(
@@ -869,6 +870,7 @@ export const setupApp = async (options?: {
         .object({
           channel_message: z.boolean().optional(),
           participant_dms: z.boolean().optional(),
+          create_event: z.boolean().optional(),
         })
         .optional(),
     }),
@@ -899,6 +901,7 @@ export const setupApp = async (options?: {
         {
           channelMessage: request.body.notifications?.channel_message,
           participantDms: request.body.notifications?.participant_dms,
+          createEvent: request.body.notifications?.create_event,
         },
       );
     },
