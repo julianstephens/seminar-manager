@@ -7,6 +7,8 @@
     "build": "direnv exec . turbo run build",
     "build:clean": "direnv exec . turbo run clean:build",
     "dev": "direnv exec . turbo run dev",
+    "gdrive:token": "node ./scripts/google-drive-refresh-token.mjs",
+    "release": "node ./scripts/release.mjs",
     "lint-format": "direnv exec . turbo run lint format",
     "lint-format:fix": "direnv exec . turbo run lint:fix format:fix",
     "lint": "direnv exec . oxlint",

@@ -12,6 +12,7 @@ export const discordEventUrl = (guildId: string, eventId: string) =>
 
 export interface DiscordService {
   createScheduledEvent(event: DiscordEvent): Promise<{ eventId: string }>;
+  updateScheduledEvent(eventId: string, event: DiscordEvent): Promise<void>;
   sendChannelMessage(
     channelId: string,
     message: DiscordMessage,
@@ -86,6 +87,24 @@ export class DiscordJsService implements DiscordService {
       },
     )) as { id: string };
     return { eventId: result.id };
+  }
+
+  async updateScheduledEvent(
+    eventId: string,
+    event: DiscordEvent,
+  ): Promise<void> {
+    await this.rest.patch(Routes.guildScheduledEvent(this.guildId, eventId), {
+      body: {
+        name: event.name,
+        entity_type: 3,
+        privacy_level: 2,
+        entity_metadata: { location: event.location },
+        scheduled_start_time: event.startTime.toISOString(),
+        scheduled_end_time: new Date(
+          event.startTime.getTime() + 60 * 60 * 1_000,
+        ).toISOString(),
+      },
+    });
   }
 
   async checkConnection(): Promise<{ label: string }> {

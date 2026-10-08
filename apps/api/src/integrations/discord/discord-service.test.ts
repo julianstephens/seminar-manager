@@ -103,6 +103,30 @@ describe("DiscordJsService", () => {
     ]);
   });
 
+  it("updates an existing scheduled event when the session time changes", async () => {
+    const { calls, service } = setup();
+    await service.updateScheduledEvent("event-123", {
+      name: "Updated Session title",
+      location: "Updated Seminar name",
+      startTime: new Date("2026-09-19T19:00:00-04:00"),
+    });
+
+    assert.deepEqual(calls, [
+      {
+        method: "PATCH",
+        route: "/guilds/guild-1/scheduled-events/event-123",
+        body: {
+          name: "Updated Session title",
+          entity_type: 3,
+          privacy_level: 2,
+          entity_metadata: { location: "Updated Seminar name" },
+          scheduled_start_time: "2026-09-19T23:00:00.000Z",
+          scheduled_end_time: "2026-09-20T00:00:00.000Z",
+        },
+      },
+    ]);
+  });
+
   it("edits an existing publication message", async () => {
     const { calls, service } = setup();
     await service.editChannelMessage("channel-1", "message-1", {

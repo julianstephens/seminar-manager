@@ -357,13 +357,19 @@ const ensureScheduledEvent = async (
 ) => {
   const prior = await getPriorEvent(db, session.id);
   return runDiscordOperation(async () => {
-    if (prior?.external_id) return { messageId: prior.external_id };
-    const event = await discordService.createScheduledEvent({
+    const event = {
       name: session.title,
       location: seminar.name,
       startTime: session.date,
-    });
-    return { messageId: event.eventId };
+    };
+
+    if (prior?.external_id) {
+      await discordService.updateScheduledEvent(prior.external_id, event);
+      return { messageId: prior.external_id };
+    }
+
+    const created = await discordService.createScheduledEvent(event);
+    return { messageId: created.eventId };
   });
 };
 

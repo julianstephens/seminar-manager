@@ -257,6 +257,22 @@ describe("publishing with a Discord event", () => {
         if (shouldFailEvent) throw new Error("Missing event permission");
         return { eventId: "event-1" };
       },
+      updateScheduledEvent: async (
+        eventId: string,
+        event: {
+          name: string;
+          location: string;
+          startTime: Date;
+        },
+      ) => {
+        eventCalls++;
+        assert.equal(eventId, "event-1");
+        assert.deepEqual(event, {
+          name: session.title,
+          location: seminar.name,
+          startTime: session.date,
+        });
+      },
       sendChannelMessage: async (
         _channel: string,
         message: { content: string },
@@ -305,12 +321,12 @@ describe("publishing with a Discord event", () => {
     };
   };
 
-  it("creates before sending and reuses the event on republish, retaining its link", async () => {
+  it("updates the existing event on republish while retaining its link", async () => {
     const test = setup();
     assert.equal((await test.publish()).results.scheduled_event, "success");
     await test.publish();
     await test.publish(false);
-    assert.equal(test.eventCalls(), 1);
+    assert.equal(test.eventCalls(), 2);
     assert.equal(test.messages.length, 3);
     assert.ok(
       test.messages.every((message) =>

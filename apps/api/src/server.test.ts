@@ -189,6 +189,7 @@ describe("setupApp", () => {
   it("creates an updated publication record when a published session is republished after edits", async () => {
     const fakeDiscordService = {
       createScheduledEvent: async () => ({ eventId: "event-id" }),
+      updateScheduledEvent: async () => undefined,
       sendChannelMessage: async () => ({ messageId: "channel-message-id" }),
       sendDirectMessage: async () => ({ messageId: "participant-message-id" }),
       editChannelMessage: async () => undefined,

@@ -1,3 +1,8 @@
+## v0.1.7
+
+- Added script to refresh Google Drive access token
+- Fixed bug where Discord events were not being properly updated on session changes
+
 ## v0.1.6
 
 - Added privacy policy page and terms of service page
