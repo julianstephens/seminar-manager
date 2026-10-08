@@ -18,7 +18,7 @@ each participant only their assigned resources. Republishing edits the existing
 channel message when possible. Discord failures are stored in the publication
 log and can be retried through `POST /api/publications/:id/retry`.
 
-The Discord integration uses REST calls through discord.js 14.27.0 and requires
+The Discord integration uses REST calls through discord.js >=14.27.0 and requires
 Node.js 24.17.0 or newer.
 
 ## Google Drive setup

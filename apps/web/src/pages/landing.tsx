@@ -6,6 +6,7 @@ import {
   Container,
   Heading,
   Input,
+  Link,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -198,6 +199,19 @@ const LandingPage = () => {
                 </Button>
               </Stack>
             </form>
+
+            <Text fontSize="sm" color="gray.400">
+              By continuing, you agree to the seminar administration workflow.
+              Read the{" "}
+              <Link href="/privacy" color="var(--accent-soft)">
+                privacy policy
+              </Link>{" "}
+              and{" "}
+              <Link href="/terms" color="var(--accent-soft)">
+                terms of service
+              </Link>
+              .
+            </Text>
           </Stack>
         </Box>
       </Container>

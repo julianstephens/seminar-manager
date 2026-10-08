@@ -7,6 +7,8 @@ import { Navigate, Route, Routes, useLocation } from "react-router";
 
 const HomePage = lazy(() => import("@/pages/home"));
 const LandingPage = lazy(() => import("@/pages/landing"));
+const PrivacyPage = lazy(() => import("@/pages/privacy"));
+const TermsPage = lazy(() => import("@/pages/terms"));
 const SeminarDetailPage = lazy(() => import("@/pages/seminar-detail"));
 const SessionEditorPage = lazy(() => import("@/pages/session-editor"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
@@ -33,13 +35,17 @@ const RouteEffects = () => {
     const section =
       location.pathname === "/"
         ? "Admin access"
-        : location.pathname === "/settings"
-          ? "Settings"
-          : location.pathname.includes("/sessions/")
-            ? "Session editor"
-            : location.pathname.startsWith("/seminars/")
-              ? "Seminar"
-              : "Dashboard";
+        : location.pathname === "/privacy"
+          ? "Privacy policy"
+          : location.pathname === "/terms"
+            ? "Terms of service"
+            : location.pathname === "/settings"
+              ? "Settings"
+              : location.pathname.includes("/sessions/")
+                ? "Session editor"
+                : location.pathname.startsWith("/seminars/")
+                  ? "Seminar"
+                  : "Dashboard";
     document.title = `${section} | Seminar Admin`;
 
     window.requestAnimationFrame(() => {
@@ -62,6 +68,8 @@ function App() {
       <RouteEffects />
       <Routes>
         <Route path="/" element={<RootRoute />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
         <Route
           path="/dashboard"
           element={
