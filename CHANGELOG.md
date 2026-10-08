@@ -1,3 +1,7 @@
+## v0.1.6
+
+- Added privacy policy page and terms of service page
+
 ## v0.1.5
 
 - Fixed issue with seminar session time not converting to local timezone in Discord channel message
